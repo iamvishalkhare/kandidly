@@ -48,7 +48,7 @@ const STEPS: { n: string; title: string; body: string; cta?: { label: string; to
   {
     n: '01', title: 'Define',
     body: 'Set the role, screening form, and weighted rubric in the requisition builder. Publish when the weights hit 100%.',
-    cta: { label: 'Open builder', to: '/admin/requisitions' },
+    cta: { label: 'Open builder', to: '/console/requisitions/new' },
   },
   {
     n: '02', title: 'Deploy',
@@ -58,7 +58,7 @@ const STEPS: { n: string; title: string; body: string; cta?: { label: string; to
   {
     n: '03', title: 'Decide',
     body: 'Scored reports with transcript evidence land in your console. Review, override, and shortlist in minutes.',
-    cta: { label: 'View console', to: '/admin' },
+    cta: { label: 'View console', to: '/console' },
   },
 ];
 
@@ -87,7 +87,7 @@ function TopNav() {
           ))}
         </div>
         <Link
-          to="/admin"
+          to="/console"
           className="flex items-center gap-2 px-4 md:px-8 border-l border-outline-variant label-mono text-on-surface hover:bg-primary-container hover:text-on-primary-container transition-colors duration-150"
         >
           Console login
@@ -116,7 +116,7 @@ function Hero() {
         </p>
         <div className="flex flex-wrap gap-px bg-outline-variant self-start border border-outline-variant">
           <Link
-            to="/admin"
+            to="/console"
             className="px-8 py-4 bg-primary-container text-on-primary-container label-mono font-bold hover:bg-surface-container-lowest hover:text-primary-fixed-dim transition-colors duration-150"
           >
             Start hiring
@@ -265,7 +265,7 @@ function CtaBand() {
           </h2>
         </div>
         <Link
-          to="/admin"
+          to="/console"
           className="self-start md:self-auto px-10 py-5 bg-primary-container text-on-primary-container label-mono font-bold border border-primary-container hover:bg-transparent hover:text-primary-fixed-dim transition-colors duration-150"
         >
           Deploy Kandidly

@@ -39,7 +39,7 @@ export default function NotFound() {
         </div>
 
         <Link
-          to="/admin"
+          to="/console"
           className="inline-flex items-center gap-2 text-sm font-medium hover:underline"
           style={{ color: 'var(--accent)' }}
         >
