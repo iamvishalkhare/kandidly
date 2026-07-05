@@ -7,12 +7,15 @@
  */
 
 import { useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   AlertTriangle,
+  ArrowLeft,
   Calendar,
+  Check,
   CheckSquare,
   CircleDot,
+  Copy,
   Globe,
   GripVertical,
   ListChecks,
@@ -28,6 +31,12 @@ import {
 import { cn } from '../../lib/utils';
 import { useToast } from '../../components/ui';
 import ConsoleLayout from './ConsoleLayout';
+import {
+  MOCK_REQUISITIONS,
+  copyToClipboard,
+  getInterviewUrl,
+  type Requisition,
+} from './requisitionData';
 
 /* -------------------------------------------------------------------------- */
 /*  Types & constants                                                         */
@@ -39,32 +48,27 @@ const TONE_OPTIONS: { value: Tone; label: string; description: string }[] = [
   {
     value: 'conversational',
     label: 'Conversational',
-    description:
-      'Relaxed and natural. The interviewer keeps the exchange informal and lets topics flow like a normal chat — a good default for early screening rounds.',
+    description: 'Natural, relaxed pacing for early screens.',
   },
   {
     value: 'friendly',
     label: 'Friendly & Encouraging',
-    description:
-      'Warm and reassuring. Offers gentle prompts and puts nervous candidates at ease — well suited to junior roles and high-volume hiring.',
+    description: 'Warm prompts for junior or high-volume roles.',
   },
   {
     value: 'technical',
     label: 'Technical / Strict',
-    description:
-      'Focused and rigorous. Drills into implementation detail, asks for specifics, and follows up on vague answers — best for senior technical screens.',
+    description: 'Rigorous follow-ups for senior technical screens.',
   },
   {
     value: 'structured',
     label: 'Formal & Structured',
-    description:
-      'Professional and consistent. Every candidate receives the same structured question flow, making results easy to compare — ideal when fairness and auditability matter most.',
+    description: 'Consistent question flow for easy comparison.',
   },
   {
     value: 'bar_raiser',
     label: 'Challenging / Bar-Raiser',
-    description:
-      'Deliberately probing. Pushes back on claims and stress-tests reasoning under pressure — reserve for senior and leadership positions.',
+    description: 'Probing style for leadership and bar-raiser loops.',
   },
 ];
 
@@ -156,6 +160,41 @@ const makeField = (type: FieldType): ScreeningField => ({
   required: false,
   options: CHOICE_TYPES.includes(type) ? ['Option 1', 'Option 2', 'Option 3'] : [],
 });
+
+const getRequisitionObjective = (req: Requisition) =>
+  `Hire a strong ${req.title} for the ${req.domain} function. The interview should validate hands-on depth in ${req.technicalRequirements.join(', ')}, practical problem solving, communication clarity, and readiness to contribute in production settings.`;
+
+const getRequisitionQuestions = (req: Requisition): SampleQuestion[] => [
+  {
+    id: nextId(),
+    text: `Walk me through a recent project where you used ${req.technicalRequirements.slice(0, 2).join(' and ')} in a production context.`,
+  },
+  {
+    id: nextId(),
+    text: `What trade-offs would you consider when solving a high-impact ${req.domain.toLowerCase()} problem for this role?`,
+  },
+];
+
+const getRequisitionFields = (): ScreeningField[] => [
+  {
+    ...makeField('file'),
+    label: 'Resume',
+    placeholder: 'PDF or DOCX, up to 10 MB',
+    required: true,
+  },
+  {
+    ...makeField('textarea'),
+    label: 'Why are you interested in this role?',
+    placeholder: 'Share the experience and motivation that make this role a fit.',
+    required: true,
+  },
+  {
+    ...makeField('multi_select'),
+    label: 'Which required skills have you used professionally?',
+    options: ['Java', 'Python', 'Kafka', 'React', 'SQL', 'AWS'],
+    required: true,
+  },
+];
 
 /* -------------------------------------------------------------------------- */
 /*  Shared field shell                                                        */
@@ -515,12 +554,17 @@ type DragPayload = { kind: 'new'; type: FieldType } | { kind: 'move'; id: string
 
 export default function RequisitionBuilder() {
   const navigate = useNavigate();
+  const { requisitionId } = useParams<{ requisitionId: string }>();
   const { toast } = useToast();
+  const existingRequisition = MOCK_REQUISITIONS.find(req => req.id === requisitionId);
+  const isEditing = !!existingRequisition;
+  const interviewUrl = existingRequisition ? getInterviewUrl(existingRequisition.interviewToken) : null;
+  const [copiedInterviewUrl, setCopiedInterviewUrl] = useState(false);
 
-  const [jobTitle, setJobTitle]   = useState('');
-  const [domain, setDomain]       = useState('');
-  const [objective, setObjective] = useState('');
-  const [skills, setSkills]       = useState<string[]>([]);
+  const [jobTitle, setJobTitle]   = useState(existingRequisition?.title ?? '');
+  const [domain, setDomain]       = useState(existingRequisition?.domain ?? '');
+  const [objective, setObjective] = useState(existingRequisition ? getRequisitionObjective(existingRequisition) : '');
+  const [skills, setSkills]       = useState<string[]>(existingRequisition?.technicalRequirements ?? []);
   const [tone, setTone]           = useState<Tone>('technical');
   const [touched, setTouched]     = useState<Record<string, boolean>>({});
   const [attempted, setAttempted] = useState(false);
@@ -530,9 +574,13 @@ export default function RequisitionBuilder() {
   const [domainDb, setDomainDb]     = useState<string[]>(DB_DOMAINS);
   const [skillDb, setSkillDb]       = useState<string[]>(DB_SKILLS);
 
-  const [sampleQuestions, setSampleQuestions] = useState<SampleQuestion[]>([]);
+  const [sampleQuestions, setSampleQuestions] = useState<SampleQuestion[]>(
+    existingRequisition ? getRequisitionQuestions(existingRequisition) : [],
+  );
 
-  const [fields, setFields] = useState<ScreeningField[]>([]);
+  const [fields, setFields] = useState<ScreeningField[]>(
+    existingRequisition ? getRequisitionFields() : [],
+  );
   const [expandedFieldId, setExpandedFieldId] = useState<string | null>(null);
   const [dragging, setDragging] = useState<DragPayload | null>(null);
   const [dropIndex, setDropIndex] = useState<number | null>(null);
@@ -635,40 +683,72 @@ export default function RequisitionBuilder() {
     navigate('/console/requisitions');
   };
 
+  const handleCopyInterviewUrl = async () => {
+    if (!interviewUrl) return;
+    await copyToClipboard(interviewUrl);
+    setCopiedInterviewUrl(true);
+    setTimeout(() => setCopiedInterviewUrl(false), 1800);
+  };
+
   const skillsInvalid = showError('skills') && skills.length === 0;
 
   return (
     <ConsoleLayout>
       {/* Header */}
-      <header className="h-16 border-b border-outline-variant bg-surface flex items-center px-8 sticky top-0 z-30">
+      <header className="h-14 border-b border-outline-variant bg-surface flex items-center justify-between px-5 sticky top-0 z-30">
         <span className="label-mono text-on-surface-variant">Requisition Builder</span>
+        <span className="label-mono text-primary-fixed-dim">
+          {jobTitle.trim() || 'Untitled Requisition'}
+        </span>
       </header>
 
       {/* Content */}
-      <div className="flex-1">
-        <div className="max-w-[1000px] w-full mx-auto flex flex-col border-x border-outline-variant">
+      <div className="flex-1 p-4">
+        <div className="w-full max-w-[1440px] flex flex-col border border-outline-variant">
           {/* Title block */}
-          <div className="p-8 border-b border-outline-variant bg-surface-container-lowest">
-            <h1 className="font-display text-headline-lg text-on-surface mb-2">New Requisition</h1>
-            <p className="text-body-md text-on-surface-variant max-w-[70ch]">
-              A requisition is the blueprint for an AI-conducted screening interview. Describe the
-              role you're hiring for, the skills that matter, and how the interview should feel —
-              Kandidly turns it into a live, structured conversation with each candidate. Once
-              deployed, you'll get a shareable link to send to potential candidates, and every
-              completed interview lands back here as a scored, evidence-backed report ready for
-              your review.
-            </p>
+          <div className="p-5 border-b border-outline-variant bg-surface-container-lowest">
+            <div className="mb-3 flex justify-start">
+              <Link
+                to="/console/requisitions"
+                className="h-9 px-3 border border-outline-variant text-on-surface-variant label-mono flex items-center gap-2 hover:bg-surface-container hover:text-on-surface transition-colors duration-150"
+              >
+                <ArrowLeft size={14} />
+                Back
+              </Link>
+            </div>
+            <div className="grid grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)_minmax(280px,360px)] gap-4 items-end">
+              <h1 className="font-display text-headline-lg text-on-surface">
+                {isEditing ? 'Edit Requisition' : 'New Requisition'}
+              </h1>
+              <p className="text-body-md text-on-surface-variant max-w-[80ch]">
+                Define the role, required skills, candidate screening questions, AI interviewer style,
+                and scoring rubric in one structured setup. When deployed, this requisition becomes
+                a shareable candidate interview link that collects form responses first, then guides
+                candidates into the voice interview and returns scored evidence for review.
+              </p>
+              {interviewUrl && (
+                <button
+                  type="button"
+                  onClick={handleCopyInterviewUrl}
+                  className="min-h-12 border border-primary-container bg-primary-container text-on-primary-container px-4 label-mono flex items-center justify-between gap-3 hover:bg-transparent hover:text-primary-fixed-dim transition-colors duration-150"
+                  title={interviewUrl}
+                >
+                  <span className="truncate">Copy Interview URL</span>
+                  {copiedInterviewUrl ? <Check size={16} /> : <Copy size={16} />}
+                </button>
+              )}
+            </div>
           </div>
 
           {/* 01. Core Details */}
-          <div className="p-8 border-b border-outline-variant">
-            <div className="flex items-center justify-between mb-6">
+          <div className="p-5 border-b border-outline-variant">
+            <div className="flex items-center justify-between mb-4">
               <h2 className="font-display text-headline-md text-on-surface">01. Core Details</h2>
               <span className="label-mono text-primary-fixed-dim uppercase px-2 py-1 border border-primary-container bg-primary-container/10">
                 Required
               </span>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
               <div className="flex flex-col gap-2">
                 <FieldLabel required>Job Title</FieldLabel>
                 <AutocompleteInput
@@ -703,36 +783,23 @@ export default function RequisitionBuilder() {
           </div>
 
           {/* 02. Role Context */}
-          <div className="p-8 border-b border-outline-variant">
-            <div className="flex items-center justify-between mb-2">
+          <div className="p-5 border-b border-outline-variant">
+            <div className="flex items-center justify-between mb-4">
               <h2 className="font-display text-headline-md text-on-surface">02. Role Context</h2>
             </div>
-            <p className="text-body-md text-on-surface-variant max-w-[70ch] mb-6">
-              Help the interviewer understand who you're looking for. Describe the kind of
-              candidate who would thrive in this role — their experience, strengths, and working
-              style — along with what the role needs to achieve. The more context you give here,
-              the more precisely Kandidly can steer its questions. You can also add sample
-              questions below as a reference for the topics and depth you'd like covered.
-            </p>
-            <div className="flex flex-col gap-6">
+            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.1fr)_minmax(360px,0.9fr)] gap-5">
               <div className="flex flex-col gap-2">
                 <FieldLabel>Ideal Candidate & Role Objective</FieldLabel>
                 <textarea
                   value={objective}
                   onChange={e => setObjective(e.target.value)}
                   placeholder="e.g. We need a hands-on engineer who has scaled a consumer product past a million users, communicates clearly with non-technical stakeholders, and can own our checkout flow end-to-end within the first quarter..."
-                  className={cn(inputClasses(false), 'h-32 resize-none')}
+                  className={cn(inputClasses(false), 'h-40 resize-none')}
                 />
               </div>
 
               <div className="flex flex-col gap-3">
-                <div className="flex flex-col gap-1">
-                  <FieldLabel>Sample Questions (Optional)</FieldLabel>
-                  <span className="text-body-md text-on-surface-variant">
-                    Kandidly uses these as reference points — it may adapt the wording, but will
-                    make sure the same ground gets covered.
-                  </span>
-                </div>
+                <FieldLabel>Sample Questions (Optional)</FieldLabel>
                 {sampleQuestions.map((q, i) => (
                   <div key={q.id} className="flex items-center gap-3">
                     <span className="label-mono text-on-surface-variant w-8 shrink-0">Q{i + 1}</span>
@@ -767,11 +834,11 @@ export default function RequisitionBuilder() {
           {/* 03. Technical Requirements */}
           <div
             className={cn(
-              'p-8 border-b border-outline-variant',
+              'p-5 border-b border-outline-variant',
               skillsInvalid && 'bg-surface/50 border-l-[4px] border-l-error',
             )}
           >
-            <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center justify-between mb-4">
               <h2 className="font-display text-headline-md text-on-surface">03. Technical Requirements</h2>
               {skillsInvalid ? (
                 <span className="label-mono text-error uppercase flex items-center gap-1">
@@ -795,7 +862,7 @@ export default function RequisitionBuilder() {
                 hasError={skillsInvalid}
               />
               <span className="text-body-md text-on-surface-variant">
-                Pick from existing skills, or type a new one and press Enter to create it.
+                Pick existing skills or type a new one and press Enter.
               </span>
               {skillsInvalid && (
                 <span className="label-mono text-error normal-case tracking-normal">
@@ -806,15 +873,11 @@ export default function RequisitionBuilder() {
           </div>
 
           {/* 04. Interviewer Tone */}
-          <div className="p-8 border-b border-outline-variant">
-            <div className="flex items-center justify-between mb-2">
+          <div className="p-5 border-b border-outline-variant">
+            <div className="flex items-center justify-between mb-4">
               <h2 className="font-display text-headline-md text-on-surface">04. Interviewer Tone</h2>
             </div>
-            <p className="text-body-md text-on-surface-variant max-w-[70ch] mb-6">
-              Choose how Kandidly should carry itself during the interview. The tone shapes
-              phrasing, pacing, and how hard the interviewer pushes on follow-ups.
-            </p>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-px bg-outline-variant border border-outline-variant">
               {TONE_OPTIONS.map(opt => {
                 const active = tone === opt.value;
                 return (
@@ -823,10 +886,10 @@ export default function RequisitionBuilder() {
                     type="button"
                     onClick={() => setTone(opt.value)}
                     className={cn(
-                      'flex items-start gap-3 p-4 border transition-colors duration-150 text-left',
+                      'flex items-start gap-3 p-3 transition-colors duration-150 text-left bg-surface min-h-[116px]',
                       active
-                        ? 'border-primary-container bg-primary-container/10'
-                        : 'border-outline-variant hover:bg-surface-container',
+                        ? 'bg-primary-container/10'
+                        : 'hover:bg-surface-container',
                     )}
                   >
                     <span
@@ -852,21 +915,15 @@ export default function RequisitionBuilder() {
           </div>
 
           {/* 05. Screening Form Builder */}
-          <div className="p-8 border-b border-outline-variant">
-            <div className="flex items-center justify-between mb-2">
+          <div className="p-5 border-b border-outline-variant">
+            <div className="flex items-center justify-between mb-4">
               <h2 className="font-display text-headline-md text-on-surface">05. Screening Form Builder</h2>
             </div>
-            <p className="text-body-md text-on-surface-variant max-w-[70ch] mb-6">
-              Build the short form candidates complete before their interview begins. Drag
-              elements from the palette into the form — the preview on the right shows the form
-              exactly as candidates will see it. Use the <Settings2 size={14} className="inline -mt-0.5" /> icon
-              on any element to configure its label, placeholder, and whether it's required.
-            </p>
-            <div className="flex flex-col lg:flex-row gap-8">
+            <div className="grid grid-cols-1 xl:grid-cols-[260px_minmax(0,1fr)] gap-5">
               {/* Toolbox */}
-              <div className="w-full lg:w-1/3 flex flex-col gap-4">
-                <span className="label-mono text-on-surface-variant">Form Elements — drag onto the form, or click to append</span>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-3">
+              <div className="w-full flex flex-col gap-3">
+                <span className="label-mono text-on-surface-variant">Form Elements</span>
+                <div className="grid grid-cols-2 xl:grid-cols-1 gap-2">
                   {FIELD_TYPES.map(ft => (
                     <button
                       key={ft.type}
@@ -879,7 +936,7 @@ export default function RequisitionBuilder() {
                       }}
                       onDragEnd={endDrag}
                       onClick={() => insertField(ft.type, fields.length)}
-                      className="flex items-center gap-3 p-3 border border-outline-variant hover:border-primary-container hover:text-primary-fixed-dim hover:bg-primary-container/5 transition-colors duration-150 label-mono justify-start cursor-grab active:cursor-grabbing"
+                      className="flex items-center gap-2 p-2.5 border border-outline-variant hover:border-primary-container hover:text-primary-fixed-dim hover:bg-primary-container/5 transition-colors duration-150 label-mono justify-start cursor-grab active:cursor-grabbing"
                     >
                       <GripVertical size={14} className="text-on-surface-variant shrink-0 -ml-1" />
                       <ft.icon size={18} />
@@ -892,7 +949,7 @@ export default function RequisitionBuilder() {
               {/* Canvas — candidate-facing preview */}
               <div
                 className={cn(
-                  'w-full lg:w-2/3 flex flex-col border bg-surface-container-lowest min-h-[400px] transition-colors duration-150',
+                  'w-full flex flex-col border bg-surface-container-lowest min-h-[360px] transition-colors duration-150',
                   dragging ? 'border-primary-container' : 'border-outline-variant',
                 )}
                 onDragOver={e => {
@@ -904,21 +961,18 @@ export default function RequisitionBuilder() {
                 onDrop={handleCanvasDrop}
               >
                 {/* Preview header — mimics the candidate screening page */}
-                <div className="p-6 border-b border-outline-variant bg-surface">
-                  <p className="label-mono text-on-surface-variant mb-2">Candidate Preview — Screening Form</p>
+                <div className="p-4 border-b border-outline-variant bg-surface">
+                  <p className="label-mono text-on-surface-variant mb-1">Candidate Preview — Screening Form</p>
                   <p className="font-display text-headline-md text-on-surface">
                     {jobTitle.trim() || 'Untitled Role'}
                   </p>
-                  <p className="text-body-md text-on-surface-variant mt-1">
-                    Please answer a few quick questions before your interview begins.
-                  </p>
                 </div>
 
-                <div className="flex-1 flex flex-col gap-3 p-6">
+                <div className="flex-1 flex flex-col gap-3 p-4">
                   {fields.length === 0 && (
                     <div
                       className={cn(
-                        'label-mono text-on-surface-variant text-center border border-dashed p-10 my-auto transition-colors duration-150',
+                        'label-mono text-on-surface-variant text-center border border-dashed p-8 my-auto transition-colors duration-150',
                         dragging ? 'border-primary-container text-primary-fixed-dim' : 'border-outline-variant',
                       )}
                     >
@@ -1060,7 +1114,7 @@ export default function RequisitionBuilder() {
 
                 {/* Inert submit — completes the candidate preview */}
                 {fields.length > 0 && (
-                  <div className="p-6 border-t border-outline-variant pointer-events-none select-none">
+                  <div className="p-4 border-t border-outline-variant pointer-events-none select-none">
                     <span className="inline-block label-mono text-on-primary bg-primary-container uppercase px-6 py-2.5">
                       Submit & Continue to Interview
                     </span>
@@ -1071,8 +1125,8 @@ export default function RequisitionBuilder() {
           </div>
 
           {/* 06. Assessment Rubrics */}
-          <div className="p-8 border-b border-outline-variant">
-            <div className="flex items-center justify-between mb-6">
+          <div className="p-5 border-b border-outline-variant">
+            <div className="flex items-center justify-between mb-4">
               <h2 className="font-display text-headline-md text-on-surface">06. Assessment Rubrics</h2>
             </div>
             <div className="flex flex-col border border-outline-variant bg-surface-container-lowest">
@@ -1097,7 +1151,7 @@ export default function RequisitionBuilder() {
                       value={c.description}
                       onChange={e => updateCriterion(c.id, { description: e.target.value })}
                       placeholder="Describe what and how to judge for this criterion..."
-                      className="bg-transparent border border-outline-variant p-2 w-full h-20 text-body-md text-on-surface focus:outline-none focus:ring-0 resize-none"
+                      className="bg-transparent border border-outline-variant p-2 w-full h-12 text-body-md text-on-surface focus:outline-none focus:ring-0 resize-none"
                     />
                   </div>
                   <div className="col-span-3 border-r border-outline-variant flex items-start">
@@ -1138,7 +1192,7 @@ export default function RequisitionBuilder() {
             <button
               type="button"
               onClick={addCriterion}
-              className="mt-4 flex items-center gap-2 px-6 py-3 border border-primary-container text-primary-fixed-dim label-mono hover:bg-primary-container/5 transition-colors duration-150"
+              className="mt-3 flex items-center gap-2 px-5 py-2 border border-primary-container text-primary-fixed-dim label-mono hover:bg-primary-container/5 transition-colors duration-150"
             >
               <Plus size={18} />
               Add Criteria
@@ -1146,7 +1200,7 @@ export default function RequisitionBuilder() {
           </div>
 
           {/* Footer */}
-          <footer className="mt-auto py-8 px-8 flex flex-col md:flex-row justify-between items-center gap-4 border-t border-outline-variant bg-surface-container-lowest">
+          <footer className="mt-auto py-4 px-5 flex flex-col md:flex-row justify-between items-center gap-3 border-t border-outline-variant bg-surface-container-lowest">
             <p className="font-display text-headline-md font-bold text-primary-fixed-dim">KANDIDLY AI</p>
             <p className="label-mono text-on-surface-variant">© 2026 Kandidly AI. All rights reserved.</p>
           </footer>
@@ -1154,7 +1208,7 @@ export default function RequisitionBuilder() {
       </div>
 
       {/* Save action bar */}
-      <div className="h-16 border-t border-outline-variant bg-surface-container-lowest flex justify-between items-center px-8 sticky bottom-0 z-30 shrink-0">
+      <div className="h-14 border-t border-outline-variant bg-surface-container-lowest flex justify-between items-center px-5 sticky bottom-0 z-30 shrink-0">
         <div className="flex items-center gap-2">
           {errors.length > 0 ? (
             <>
@@ -1171,7 +1225,7 @@ export default function RequisitionBuilder() {
           <button
             type="button"
             onClick={handleSaveOffline}
-            className="label-mono text-on-surface uppercase border border-outline-variant px-6 py-2 hover:bg-surface-variant hover:text-error hover:border-error transition-colors duration-150"
+            className="label-mono text-on-surface uppercase border border-outline-variant px-5 py-2 hover:bg-surface-variant hover:text-error hover:border-error transition-colors duration-150"
           >
             Save as Offline
           </button>
@@ -1179,7 +1233,7 @@ export default function RequisitionBuilder() {
             type="button"
             onClick={handleDeploy}
             className={cn(
-              'label-mono text-on-primary bg-primary-container uppercase border border-primary-container px-6 py-2 transition-colors duration-150 flex items-center gap-2',
+              'label-mono text-on-primary bg-primary-container uppercase border border-primary-container px-5 py-2 transition-colors duration-150 flex items-center gap-2',
               errors.length > 0 ? 'opacity-50 cursor-not-allowed' : 'hover:bg-transparent hover:text-primary-fixed-dim',
             )}
           >
