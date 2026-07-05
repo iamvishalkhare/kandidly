@@ -1,0 +1,175 @@
+# Kandidly dev/CI stack. Engine-agnostic Compose Spec (SPEC §3.5): runs identically
+# under `podman compose` (rootless) and Docker Engine. Rules enforced here:
+#  - fully qualified image refs (no short-name resolution)
+#  - all published ports >= 1024 (rootless-safe)
+#  - named volumes for stateful services (avoids rootless UID-map pain)
+#  - source bind mounts carry :z (SELinux relabel; ignored off-SELinux)
+#  - services talk via compose DNS names; no host.* needed
+name: kandidly
+
+x-backend-env: &backend-env
+  KANDIDLY_ENV: ${KANDIDLY_ENV:-dev}
+  KANDIDLY_DATABASE_URL: ${KANDIDLY_DATABASE_URL:-postgresql+asyncpg://kandidly:kandidly@postgres:5432/kandidly}
+  KANDIDLY_REDIS_URL: ${KANDIDLY_REDIS_URL:-redis://redis:6379/0}
+  KANDIDLY_S3_ENDPOINT: ${KANDIDLY_S3_ENDPOINT:-http://minio:9000}
+  KANDIDLY_S3_ACCESS_KEY: ${KANDIDLY_S3_ACCESS_KEY:-kandidly}
+  KANDIDLY_S3_SECRET_KEY: ${KANDIDLY_S3_SECRET_KEY:-kandidly-secret}
+  KANDIDLY_S3_REGION: ${KANDIDLY_S3_REGION:-us-east-1}
+  KANDIDLY_AUTH_DEV_MODE: ${KANDIDLY_AUTH_DEV_MODE:-true}
+  KANDIDLY_JWT_ALG: ${KANDIDLY_JWT_ALG:-RS256}
+  KANDIDLY_SERVICE_TOKEN: ${KANDIDLY_SERVICE_TOKEN:-dev-service-token-change-me}
+  KANDIDLY_ANTHROPIC_API_KEY: ${KANDIDLY_ANTHROPIC_API_KEY:-}
+  KANDIDLY_OPENAI_API_KEY: ${KANDIDLY_OPENAI_API_KEY:-}
+  KANDIDLY_GOOGLE_API_KEY: ${KANDIDLY_GOOGLE_API_KEY:-}
+  KANDIDLY_BASE_URL_WEB: ${KANDIDLY_BASE_URL_WEB:-http://localhost:5173}
+
+services:
+  postgres:
+    image: docker.io/library/postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-kandidly}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kandidly}
+      POSTGRES_DB: ${POSTGRES_DB:-kandidly}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-kandidly} -d ${POSTGRES_DB:-kandidly}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: docker.io/library/redis:7
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-04-08T15-41-24Z
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-kandidly}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-kandidly-secret}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # One-shot: create the private buckets (SPEC §6.3) then exit.
+  minio-init:
+    image: quay.io/minio/mc:RELEASE.2025-04-08T15-39-49Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}" &&
+        for b in kandidly-resumes kandidly-snapshots kandidly-selfies kandidly-recordings kandidly-reports; do
+          mc mb -p "local/$$b" || true;
+        done
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-kandidly}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-kandidly-secret}
+
+  backend:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    command: ["uv", "run", "--package", "kandidly-backend", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    environment:
+      <<: *backend-env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../backend:/app/backend:z
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    command: ["uv", "run", "--package", "kandidly-backend", "arq", "app.jobs.worker.WorkerSettings"]
+    environment:
+      <<: *backend-env
+      KANDIDLY_DEEPGRAM_API_KEY: ${KANDIDLY_DEEPGRAM_API_KEY:-}
+      KANDIDLY_CARTESIA_API_KEY: ${KANDIDLY_CARTESIA_API_KEY:-}
+    volumes:
+      - ../backend:/app/backend:z
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  agent:
+    build:
+      context: ..
+      dockerfile: agent/Dockerfile
+    command: ["uv", "run", "--package", "kandidly-agent", "python", "worker.py", "start"]
+    environment:
+      KANDIDLY_ENV: ${KANDIDLY_ENV:-dev}
+      KANDIDLY_REDIS_URL: ${KANDIDLY_REDIS_URL:-redis://redis:6379/0}
+      KANDIDLY_BACKEND_URL: ${KANDIDLY_BACKEND_URL:-http://backend:8000}
+      KANDIDLY_SERVICE_TOKEN: ${KANDIDLY_SERVICE_TOKEN:-dev-service-token-change-me}
+      KANDIDLY_LIVEKIT_URL: ${KANDIDLY_LIVEKIT_URL:-}
+      KANDIDLY_LIVEKIT_API_KEY: ${KANDIDLY_LIVEKIT_API_KEY:-}
+      KANDIDLY_LIVEKIT_API_SECRET: ${KANDIDLY_LIVEKIT_API_SECRET:-}
+      KANDIDLY_DEEPGRAM_API_KEY: ${KANDIDLY_DEEPGRAM_API_KEY:-}
+      KANDIDLY_CARTESIA_API_KEY: ${KANDIDLY_CARTESIA_API_KEY:-}
+      KANDIDLY_ANTHROPIC_API_KEY: ${KANDIDLY_ANTHROPIC_API_KEY:-}
+      KANDIDLY_REALTIME_LLM: ${KANDIDLY_REALTIME_LLM:-anthropic:claude-haiku-4-5}
+      KANDIDLY_STT: ${KANDIDLY_STT:-deepgram:nova-3}
+      KANDIDLY_TTS: ${KANDIDLY_TTS:-cartesia:sonic}
+      KANDIDLY_MAX_INTERVIEW_SECONDS: ${KANDIDLY_MAX_INTERVIEW_SECONDS:-1800}
+      KANDIDLY_WRAP_TRIGGER_SECONDS: ${KANDIDLY_WRAP_TRIGGER_SECONDS:-180}
+      KANDIDLY_AGENT_MAX_CONCURRENT: ${KANDIDLY_AGENT_MAX_CONCURRENT:-50}
+    volumes:
+      - ../agent:/app/agent:z
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ../web
+      dockerfile: Dockerfile
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5173"]
+    environment:
+      VITE_API_BASE: ${VITE_API_BASE:-http://localhost:8000}
+    ports:
+      - "5173:5173"
+    volumes:
+      - ../web:/app:z
+      - webnodemodules:/app/node_modules
+    depends_on:
+      backend:
+        condition: service_started
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:
+  webnodemodules:

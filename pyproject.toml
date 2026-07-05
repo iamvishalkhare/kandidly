@@ -1,0 +1,15 @@
+[project]
+name = "kandidly"
+version = "0.1.0"
+description = "Kandidly — AI voice interviewer for candidate screening"
+requires-python = ">=3.12"
+
+[tool.uv]
+managed = true
+
+[tool.uv.workspace]
+members = ["backend", "agent"]
+
+[tool.uv.sources]
+kandidly-backend = { workspace = true }
+kandidly-agent = { workspace = true }

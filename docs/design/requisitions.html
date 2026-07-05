@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kandidly Console — Requisitions</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Hanken+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=block" rel="stylesheet">
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      colors: {
+        "surface": "#11131c",
+        "surface-bright": "#373943",
+        "surface-container-lowest": "#0c0e17",
+        "surface-container-low": "#191b24",
+        "surface-container": "#1d1f29",
+        "surface-container-high": "#282933",
+        "surface-container-highest": "#33343e",
+        "on-surface": "#e2e1ef",
+        "on-surface-variant": "#c4c5d9",
+        "outline": "#8e90a2",
+        "outline-variant": "#434656",
+        "primary": "#b8c3ff",
+        "on-primary": "#002388",
+        "primary-container": "#2e5bff",
+        "on-primary-container": "#efefff",
+        "secondary-container": "#454747",
+        "on-secondary-container": "#b4b5b5",
+        "error": "#ffb4ab",
+        "on-error": "#690005",
+        "error-container": "#93000a",
+        "on-error-container": "#ffdad6"
+      },
+      fontFamily: {
+        display: ['"Space Grotesk"', 'sans-serif'],
+        body: ['"Hanken Grotesk"', 'sans-serif'],
+        mono: ['"JetBrains Mono"', 'monospace']
+      },
+      fontSize: {
+        "display-lg": ["64px", { lineHeight: "1.1", letterSpacing: "-0.04em", fontWeight: "700" }],
+        "headline-lg": ["32px", { lineHeight: "1.2", letterSpacing: "-0.02em", fontWeight: "600" }],
+        "headline-lg-mobile": ["28px", { lineHeight: "1.2", fontWeight: "600" }],
+        "headline-md": ["24px", { lineHeight: "1.3", fontWeight: "500" }],
+        "body-lg": ["18px", { lineHeight: "1.6", fontWeight: "400" }],
+        "body-md": ["16px", { lineHeight: "1.6", fontWeight: "400" }],
+        "label-sm": ["12px", { lineHeight: "1.4", fontWeight: "500" }]
+      }
+    }
+  }
+}
+</script>
+<style>
+  * { border-radius: 0 !important; }
+  ::selection { background: #2e5bff; color: #efefff; }
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: #0c0e17; }
+  ::-webkit-scrollbar-thumb { background: #434656; }
+  ::-webkit-scrollbar-thumb:hover { background: #2e5bff; }
+  @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+  .blink { animation: blink 1.4s steps(2, end) infinite; }
+</style>
+</head>
+<body class="bg-surface-container-lowest text-on-surface font-body text-body-md antialiased flex min-h-screen">
+
+<!-- ============ SIDEBAR (shared shell) ============ -->
+<aside class="hidden lg:flex w-64 shrink-0 flex-col border-r border-outline-variant bg-surface-container-lowest h-screen sticky top-0">
+  <a href="index.html" class="h-16 px-5 flex flex-col justify-center border-b border-outline-variant">
+    <span class="flex items-center gap-2">
+      <span class="w-2.5 h-2.5 bg-primary-container"></span>
+      <span class="font-display text-headline-md font-bold tracking-tight text-primary leading-none">KANDIDLY</span>
+    </span>
+    <span class="font-mono text-[10px] uppercase tracking-[0.25em] text-on-surface-variant mt-1 ml-[18px]">Voice console</span>
+  </a>
+  <div class="p-4 border-b border-outline-variant">
+    <a href="requisition-new.html" class="flex items-center justify-center gap-2 w-full py-3 bg-primary-container text-on-primary-container font-mono text-label-sm uppercase tracking-[0.15em] font-bold border border-primary-container hover:bg-transparent hover:text-primary transition-colors">
+      <span class="material-symbols-outlined text-[18px]">add</span>
+      New requisition
+    </a>
+  </div>
+  <nav class="flex-1 overflow-y-auto flex flex-col">
+    <a href="dashboard.html" class="flex items-center gap-3 px-5 py-4 text-on-surface-variant font-mono text-label-sm uppercase tracking-[0.15em] hover:bg-surface-container hover:text-on-surface transition-colors">
+      <span class="material-symbols-outlined text-[18px]">grid_view</span>
+      Dashboard
+    </a>
+    <a href="requisitions.html" class="flex items-center gap-3 px-5 py-4 bg-primary-container text-on-primary-container font-mono text-label-sm uppercase tracking-[0.15em] font-bold">
+      <span class="material-symbols-outlined text-[18px]" style="font-variation-settings:'FILL' 1">assignment</span>
+      Requisitions
+    </a>
+    <a href="#" class="flex items-center gap-3 px-5 py-4 text-on-surface-variant font-mono text-label-sm uppercase tracking-[0.15em] hover:bg-surface-container hover:text-on-surface transition-colors">
+      <span class="material-symbols-outlined text-[18px]">record_voice_over</span>
+      Interviews
+    </a>
+    <a href="#" class="flex items-center gap-3 px-5 py-4 text-on-surface-variant font-mono text-label-sm uppercase tracking-[0.15em] hover:bg-surface-container hover:text-on-surface transition-colors">
+      <span class="material-symbols-outlined text-[18px]">rule</span>
+      Rubrics
+    </a>
+    <a href="#" class="flex items-center gap-3 px-5 py-4 text-on-surface-variant font-mono text-label-sm uppercase tracking-[0.15em] hover:bg-surface-container hover:text-on-surface transition-colors">
+      <span class="material-symbols-outlined text-[18px]">bar_chart</span>
+      Analytics
+    </a>
+  </nav>
+  <div class="border-t border-outline-variant">
+    <a href="#" class="flex items-center gap-3 px-5 py-3 text-on-surface-variant font-mono text-label-sm uppercase tracking-[0.15em] hover:bg-surface-container hover:text-on-surface transition-colors">
+      <span class="material-symbols-outlined text-[18px]">settings</span>
+      Settings
+    </a>
+    <a href="#" class="flex items-center gap-3 px-5 py-3 text-on-surface-variant font-mono text-label-sm uppercase tracking-[0.15em] hover:bg-surface-container hover:text-on-surface transition-colors">
+      <span class="material-symbols-outlined text-[18px]">help</span>
+      Support
+    </a>
+  </div>
+  <div class="border-t border-outline-variant p-4">
+    <div class="flex items-center gap-3 p-2 border border-transparent hover:border-outline-variant hover:bg-surface-container cursor-pointer transition-colors">
+      <div class="w-9 h-9 shrink-0 bg-surface border border-outline-variant flex items-center justify-center font-display font-bold text-primary">JD</div>
+      <div class="flex flex-col min-w-0">
+        <span class="font-mono text-label-sm uppercase text-on-surface truncate">Jane Doe</span>
+        <span class="font-mono text-[10px] uppercase tracking-[0.15em] text-on-surface-variant">Recruiter</span>
+      </div>
+      <span class="material-symbols-outlined text-on-surface-variant ml-auto text-[18px]">unfold_more</span>
+    </div>
+  </div>
+</aside>
+
+<!-- ============ MAIN ============ -->
+<div class="flex-1 flex flex-col min-w-0">
+
+  <!-- Mobile top bar -->
+  <div class="lg:hidden h-14 flex items-center justify-between px-4 border-b border-outline-variant bg-surface-container-lowest sticky top-0 z-40">
+    <span class="flex items-center gap-2">
+      <span class="w-2 h-2 bg-primary-container"></span>
+      <span class="font-display font-bold text-primary">KANDIDLY</span>
+    </span>
+    <span class="material-symbols-outlined text-on-surface-variant">menu</span>
+  </div>
+
+  <!-- Control bar -->
+  <header class="h-16 shrink-0 border-b border-outline-variant flex items-center justify-between gap-4 px-4 md:px-8 bg-surface-container-lowest sticky top-0 z-30">
+    <div class="flex items-center gap-px bg-outline-variant border border-outline-variant flex-1 max-w-2xl">
+      <div class="relative flex items-center bg-surface-container-lowest flex-1">
+        <span class="material-symbols-outlined absolute left-3 text-[18px] text-on-surface-variant pointer-events-none">search</span>
+        <input type="text" placeholder="SEARCH REQUISITIONS…"
+               class="w-full h-10 bg-transparent border-0 pl-10 pr-3 font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface placeholder:text-on-surface-variant/50 focus:ring-0 focus:outline-none">
+      </div>
+      <button class="h-10 px-4 bg-primary-container text-on-primary-container font-mono text-label-sm uppercase tracking-[0.15em] font-bold shrink-0">All</button>
+      <button class="h-10 px-4 bg-surface-container-lowest text-on-surface-variant font-mono text-label-sm uppercase tracking-[0.15em] hover:bg-surface-container hover:text-on-surface transition-colors shrink-0">Live</button>
+      <button class="h-10 px-4 bg-surface-container-lowest text-on-surface-variant font-mono text-label-sm uppercase tracking-[0.15em] hover:bg-surface-container hover:text-on-surface transition-colors shrink-0 hidden md:block">Draft</button>
+      <button class="h-10 px-4 bg-surface-container-lowest text-on-surface-variant font-mono text-label-sm uppercase tracking-[0.15em] hover:bg-surface-container hover:text-on-surface transition-colors shrink-0 hidden md:block">Closed</button>
+    </div>
+    <a href="requisition-new.html" class="hidden md:flex items-center gap-2 h-10 px-5 bg-primary-container text-on-primary-container font-mono text-label-sm uppercase tracking-[0.15em] font-bold border border-primary-container hover:bg-transparent hover:text-primary transition-colors shrink-0">
+      <span class="material-symbols-outlined text-[18px]">add</span>
+      New requisition
+    </a>
+  </header>
+
+  <main class="flex-1 p-4 md:p-8 flex flex-col gap-6">
+    <div class="flex items-baseline gap-4">
+      <h1 class="font-display text-headline-lg-mobile md:text-headline-lg text-on-surface">Requisitions</h1>
+      <span class="font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface-variant">24 total · 18 live</span>
+    </div>
+
+    <!-- ============ INTERLOCKING CARD GRID ============ -->
+    <section class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-px bg-outline-variant border border-outline-variant">
+
+      <!-- Card: ENG-001 (live) -->
+      <a href="#" class="group bg-surface flex flex-col hover:bg-surface-container-low transition-colors">
+        <div class="p-4 border-b border-outline-variant flex justify-between items-start gap-3">
+          <div>
+            <p class="font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface-variant mb-1">ENG-001</p>
+            <h2 class="font-display text-headline-md text-on-surface group-hover:text-primary transition-colors">Senior AI Engineer</h2>
+          </div>
+          <span class="inline-flex items-center gap-2 bg-primary-container text-on-primary-container px-2.5 py-1 font-mono text-label-sm uppercase tracking-[0.1em] shrink-0">
+            <span class="w-1.5 h-1.5 bg-on-primary-container blink"></span>Live
+          </span>
+        </div>
+        <div class="p-4 border-b border-outline-variant flex-1 grid grid-cols-2 gap-x-4 gap-y-3">
+          <div><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60 mb-0.5">Department</p><p class="text-body-md text-on-surface">Machine Learning</p></div>
+          <div><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60 mb-0.5">Location</p><p class="text-body-md text-on-surface">Remote / NYC</p></div>
+          <div><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60 mb-0.5">Opened</p><p class="font-mono text-label-sm text-on-surface pt-1">24 MAY 2026</p></div>
+          <div><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60 mb-0.5">Closes</p><p class="font-mono text-label-sm text-on-surface pt-1">31 JUL 2026</p></div>
+        </div>
+        <div class="grid grid-cols-3 gap-px bg-outline-variant">
+          <div class="bg-surface-container-lowest p-3 text-center"><p class="font-display text-headline-md text-on-surface">142</p><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60">Invited</p></div>
+          <div class="bg-surface-container-lowest p-3 text-center"><p class="font-display text-headline-md text-on-surface">37</p><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60">Completed</p></div>
+          <div class="bg-surface-container-lowest p-3 text-center"><p class="font-display text-headline-md text-primary">78.5</p><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60">Median</p></div>
+        </div>
+      </a>
+
+      <!-- Card: DES-042 (live) -->
+      <a href="#" class="group bg-surface flex flex-col hover:bg-surface-container-low transition-colors">
+        <div class="p-4 border-b border-outline-variant flex justify-between items-start gap-3">
+          <div>
+            <p class="font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface-variant mb-1">DES-042</p>
+            <h2 class="font-display text-headline-md text-on-surface group-hover:text-primary transition-colors">Product Designer</h2>
+          </div>
+          <span class="inline-flex items-center gap-2 bg-primary-container text-on-primary-container px-2.5 py-1 font-mono text-label-sm uppercase tracking-[0.1em] shrink-0">
+            <span class="w-1.5 h-1.5 bg-on-primary-container blink"></span>Live
+          </span>
+        </div>
+        <div class="p-4 border-b border-outline-variant flex-1 grid grid-cols-2 gap-x-4 gap-y-3">
+          <div><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60 mb-0.5">Department</p><p class="text-body-md text-on-surface">Product</p></div>
+          <div><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60 mb-0.5">Location</p><p class="text-body-md text-on-surface">London</p></div>
+          <div><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60 mb-0.5">Opened</p><p class="font-mono text-label-sm text-on-surface pt-1">28 MAY 2026</p></div>
+          <div><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60 mb-0.5">Closes</p><p class="font-mono text-label-sm text-on-surface pt-1">—</p></div>
+        </div>
+        <div class="grid grid-cols-3 gap-px bg-outline-variant">
+          <div class="bg-surface-container-lowest p-3 text-center"><p class="font-display text-headline-md text-on-surface">89</p><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60">Invited</p></div>
+          <div class="bg-surface-container-lowest p-3 text-center"><p class="font-display text-headline-md text-on-surface">12</p><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60">Completed</p></div>
+          <div class="bg-surface-container-lowest p-3 text-center"><p class="font-display text-headline-md text-primary">71.2</p><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60">Median</p></div>
+        </div>
+      </a>
+
+      <!-- Card: DATA-007 (draft) -->
+      <a href="#" class="group bg-surface flex flex-col hover:bg-surface-container-low transition-colors">
+        <div class="p-4 border-b border-outline-variant flex justify-between items-start gap-3">
+          <div>
+            <p class="font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface-variant mb-1">DATA-007</p>
+            <h2 class="font-display text-headline-md text-on-surface group-hover:text-primary transition-colors">Data Scientist</h2>
+          </div>
+          <span class="inline-flex items-center gap-2 border border-outline-variant text-on-surface-variant px-2.5 py-1 font-mono text-label-sm uppercase tracking-[0.1em] shrink-0">Draft</span>
+        </div>
+        <div class="p-4 border-b border-outline-variant flex-1 grid grid-cols-2 gap-x-4 gap-y-3">
+          <div><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60 mb-0.5">Department</p><p class="text-body-md text-on-surface">Analytics</p></div>
+          <div><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60 mb-0.5">Location</p><p class="text-body-md text-on-surface">Bengaluru</p></div>
+          <div><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60 mb-0.5">Opened</p><p class="font-mono text-label-sm text-on-surface pt-1">—</p></div>
+          <div><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60 mb-0.5">Closes</p><p class="font-mono text-label-sm text-on-surface pt-1">—</p></div>
+        </div>
+        <div class="grid grid-cols-3 gap-px bg-outline-variant">
+          <div class="bg-surface-container-lowest p-3 text-center"><p class="font-display text-headline-md text-on-surface-variant">—</p><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60">Invited</p></div>
+          <div class="bg-surface-container-lowest p-3 text-center"><p class="font-display text-headline-md text-on-surface-variant">—</p><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60">Completed</p></div>
+          <div class="bg-surface-container-lowest p-3 text-center"><p class="font-display text-headline-md text-on-surface-variant">—</p><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60">Median</p></div>
+        </div>
+      </a>
+
+      <!-- Card: ENG-014 (live) -->
+      <a href="#" class="group bg-surface flex flex-col hover:bg-surface-container-low transition-colors">
+        <div class="p-4 border-b border-outline-variant flex justify-between items-start gap-3">
+          <div>
+            <p class="font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface-variant mb-1">ENG-014</p>
+            <h2 class="font-display text-headline-md text-on-surface group-hover:text-primary transition-colors">Platform Engineer</h2>
+          </div>
+          <span class="inline-flex items-center gap-2 bg-primary-container text-on-primary-container px-2.5 py-1 font-mono text-label-sm uppercase tracking-[0.1em] shrink-0">
+            <span class="w-1.5 h-1.5 bg-on-primary-container blink"></span>Live
+          </span>
+        </div>
+        <div class="p-4 border-b border-outline-variant flex-1 grid grid-cols-2 gap-x-4 gap-y-3">
+          <div><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60 mb-0.5">Department</p><p class="text-body-md text-on-surface">Infrastructure</p></div>
+          <div><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60 mb-0.5">Location</p><p class="text-body-md text-on-surface">Remote</p></div>
+          <div><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60 mb-0.5">Opened</p><p class="font-mono text-label-sm text-on-surface pt-1">12 JUN 2026</p></div>
+          <div><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60 mb-0.5">Closes</p><p class="font-mono text-label-sm text-on-surface pt-1">15 AUG 2026</p></div>
+        </div>
+        <div class="grid grid-cols-3 gap-px bg-outline-variant">
+          <div class="bg-surface-container-lowest p-3 text-center"><p class="font-display text-headline-md text-on-surface">67</p><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60">Invited</p></div>
+          <div class="bg-surface-container-lowest p-3 text-center"><p class="font-display text-headline-md text-on-surface">21</p><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60">Completed</p></div>
+          <div class="bg-surface-container-lowest p-3 text-center"><p class="font-display text-headline-md text-primary">74.0</p><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60">Median</p></div>
+        </div>
+      </a>
+
+      <!-- Card: OPS-003 (live) -->
+      <a href="#" class="group bg-surface flex flex-col hover:bg-surface-container-low transition-colors">
+        <div class="p-4 border-b border-outline-variant flex justify-between items-start gap-3">
+          <div>
+            <p class="font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface-variant mb-1">OPS-003</p>
+            <h2 class="font-display text-headline-md text-on-surface group-hover:text-primary transition-colors">Talent Ops Lead</h2>
+          </div>
+          <span class="inline-flex items-center gap-2 bg-primary-container text-on-primary-container px-2.5 py-1 font-mono text-label-sm uppercase tracking-[0.1em] shrink-0">
+            <span class="w-1.5 h-1.5 bg-on-primary-container blink"></span>Live
+          </span>
+        </div>
+        <div class="p-4 border-b border-outline-variant flex-1 grid grid-cols-2 gap-x-4 gap-y-3">
+          <div><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60 mb-0.5">Department</p><p class="text-body-md text-on-surface">People</p></div>
+          <div><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60 mb-0.5">Location</p><p class="text-body-md text-on-surface">Mumbai</p></div>
+          <div><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60 mb-0.5">Opened</p><p class="font-mono text-label-sm text-on-surface pt-1">20 JUN 2026</p></div>
+          <div><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60 mb-0.5">Closes</p><p class="font-mono text-label-sm text-on-surface pt-1">20 JUL 2026</p></div>
+        </div>
+        <div class="grid grid-cols-3 gap-px bg-outline-variant">
+          <div class="bg-surface-container-lowest p-3 text-center"><p class="font-display text-headline-md text-on-surface">54</p><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60">Invited</p></div>
+          <div class="bg-surface-container-lowest p-3 text-center"><p class="font-display text-headline-md text-on-surface">18</p><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60">Completed</p></div>
+          <div class="bg-surface-container-lowest p-3 text-center"><p class="font-display text-headline-md text-primary">69.8</p><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60">Median</p></div>
+        </div>
+      </a>
+
+      <!-- Card: MKT-011 (closed, dimmed) -->
+      <a href="#" class="group bg-surface flex flex-col opacity-60 hover:opacity-100 transition-opacity">
+        <div class="p-4 border-b border-outline-variant flex justify-between items-start gap-3">
+          <div>
+            <p class="font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface-variant mb-1">MKT-011</p>
+            <h2 class="font-display text-headline-md text-on-surface-variant">Growth Manager</h2>
+          </div>
+          <span class="inline-flex items-center gap-2 bg-surface-container-highest text-on-surface-variant px-2.5 py-1 font-mono text-label-sm uppercase tracking-[0.1em] shrink-0">Closed</span>
+        </div>
+        <div class="p-4 border-b border-outline-variant flex-1 grid grid-cols-2 gap-x-4 gap-y-3">
+          <div><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60 mb-0.5">Department</p><p class="text-body-md text-on-surface-variant">Marketing</p></div>
+          <div><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60 mb-0.5">Location</p><p class="text-body-md text-on-surface-variant">San Francisco</p></div>
+          <div><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60 mb-0.5">Opened</p><p class="font-mono text-label-sm text-on-surface-variant pt-1">02 APR 2026</p></div>
+          <div><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60 mb-0.5">Closed</p><p class="font-mono text-label-sm text-on-surface-variant pt-1">15 JUN 2026</p></div>
+        </div>
+        <div class="grid grid-cols-3 gap-px bg-outline-variant">
+          <div class="bg-surface-container-lowest p-3 text-center"><p class="font-display text-headline-md text-on-surface-variant">210</p><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60">Invited</p></div>
+          <div class="bg-surface-container-lowest p-3 text-center"><p class="font-display text-headline-md text-on-surface-variant">64</p><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60">Completed</p></div>
+          <div class="bg-surface-container-lowest p-3 text-center"><p class="font-display text-headline-md text-on-surface-variant">66.1</p><p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant/60">Median</p></div>
+        </div>
+      </a>
+    </section>
+
+    <div class="flex justify-center">
+      <button class="font-mono text-label-sm uppercase tracking-[0.2em] text-on-surface-variant hover:text-primary transition-colors py-3 px-6 border border-outline-variant hover:border-primary-container">Load 18 more</button>
+    </div>
+  </main>
+</div>
+</body>
+</html>

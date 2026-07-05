@@ -1,0 +1,49 @@
+{
+  "interview_type": "swe_backend",
+  "nodes": [
+    {"node_type": "intro", "title": "Introduction",
+     "seed_question": "Hi, I'm Kandidly and I'll be running your screening interview today. It'll take up to about thirty minutes, and I'll ask follow-up questions as we go — that's completely normal. To start, could you tell me a little about your background and what you're working on right now?",
+     "soft_budget_seconds": 60, "priority": 5, "max_followups": 1, "difficulty": 2,
+     "provenance": {"source": "generic_bank", "detail": "intro"}},
+
+    {"node_type": "topic", "title": "Recent project deep-dive",
+     "seed_question": "Tell me about a backend system you built or owned recently. What was the problem it solved, and what were you personally responsible for?",
+     "soft_budget_seconds": 240, "priority": 1, "max_followups": 3, "difficulty": 3,
+     "provenance": {"source": "generic_bank", "detail": "ownership + scope"}},
+
+    {"node_type": "topic", "title": "System design & tradeoffs",
+     "seed_question": "Walk me through how you'd design a service that needs to handle a large volume of writes reliably. What are the main components and the tradeoffs you'd weigh?",
+     "soft_budget_seconds": 260, "priority": 1, "max_followups": 2, "difficulty": 4,
+     "provenance": {"source": "generic_bank", "detail": "system design"}},
+
+    {"node_type": "topic", "title": "Data & consistency",
+     "seed_question": "How do you think about data consistency and failure handling in a distributed system you've worked on? Give me a concrete example.",
+     "soft_budget_seconds": 220, "priority": 2, "max_followups": 2, "difficulty": 4,
+     "provenance": {"source": "generic_bank", "detail": "distributed systems"}},
+
+    {"node_type": "topic", "title": "Debugging a hard problem",
+     "seed_question": "Describe the hardest production issue you've debugged. How did you approach it, and what did you learn?",
+     "soft_budget_seconds": 200, "priority": 2, "max_followups": 2, "difficulty": 3,
+     "provenance": {"source": "generic_bank", "detail": "debugging + rigor"}},
+
+    {"node_type": "topic", "title": "Testing & quality",
+     "seed_question": "How do you decide what to test and how much? Tell me how you've balanced speed and reliability in practice.",
+     "soft_budget_seconds": 180, "priority": 3, "max_followups": 2, "difficulty": 3,
+     "provenance": {"source": "generic_bank", "detail": "quality"}},
+
+    {"node_type": "topic", "title": "Collaboration & ownership",
+     "seed_question": "Tell me about a time you disagreed with a technical decision on your team. How did you handle it?",
+     "soft_budget_seconds": 160, "priority": 3, "max_followups": 1, "difficulty": 2,
+     "provenance": {"source": "generic_bank", "detail": "collaboration"}},
+
+    {"node_type": "candidate_questions", "title": "Your questions",
+     "seed_question": "That's everything from my side. Is there anything you'd like to ask about the role or the team?",
+     "soft_budget_seconds": 90, "priority": 4, "max_followups": 1, "difficulty": 1,
+     "provenance": {"source": "generic_bank", "detail": "candidate questions"}},
+
+    {"node_type": "wrap", "title": "Wrap up",
+     "seed_question": "Thank you so much for your time today — the team will review and be in touch with next steps. Take care!",
+     "soft_budget_seconds": 30, "priority": 5, "max_followups": 0, "difficulty": 1,
+     "provenance": {"source": "generic_bank", "detail": "wrap"}}
+  ]
+}

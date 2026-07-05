@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kandidly Console — New Requisition</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Hanken+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=block" rel="stylesheet">
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      colors: {
+        "surface": "#11131c",
+        "surface-bright": "#373943",
+        "surface-container-lowest": "#0c0e17",
+        "surface-container-low": "#191b24",
+        "surface-container": "#1d1f29",
+        "surface-container-high": "#282933",
+        "surface-container-highest": "#33343e",
+        "on-surface": "#e2e1ef",
+        "on-surface-variant": "#c4c5d9",
+        "outline": "#8e90a2",
+        "outline-variant": "#434656",
+        "primary": "#b8c3ff",
+        "on-primary": "#002388",
+        "primary-container": "#2e5bff",
+        "on-primary-container": "#efefff",
+        "secondary-container": "#454747",
+        "on-secondary-container": "#b4b5b5",
+        "error": "#ffb4ab",
+        "on-error": "#690005",
+        "error-container": "#93000a",
+        "on-error-container": "#ffdad6"
+      },
+      fontFamily: {
+        display: ['"Space Grotesk"', 'sans-serif'],
+        body: ['"Hanken Grotesk"', 'sans-serif'],
+        mono: ['"JetBrains Mono"', 'monospace']
+      },
+      fontSize: {
+        "display-lg": ["64px", { lineHeight: "1.1", letterSpacing: "-0.04em", fontWeight: "700" }],
+        "headline-lg": ["32px", { lineHeight: "1.2", letterSpacing: "-0.02em", fontWeight: "600" }],
+        "headline-lg-mobile": ["28px", { lineHeight: "1.2", fontWeight: "600" }],
+        "headline-md": ["24px", { lineHeight: "1.3", fontWeight: "500" }],
+        "body-lg": ["18px", { lineHeight: "1.6", fontWeight: "400" }],
+        "body-md": ["16px", { lineHeight: "1.6", fontWeight: "400" }],
+        "label-sm": ["12px", { lineHeight: "1.4", fontWeight: "500" }]
+      }
+    }
+  }
+}
+</script>
+<style>
+  * { border-radius: 0 !important; }
+  ::selection { background: #2e5bff; color: #efefff; }
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: #0c0e17; }
+  ::-webkit-scrollbar-thumb { background: #434656; }
+  ::-webkit-scrollbar-thumb:hover { background: #2e5bff; }
+  @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+  .blink { animation: blink 1.4s steps(2, end) infinite; }
+  /* Square radios & checkboxes — solid cobalt when checked, no circles */
+  input[type="radio"], input[type="checkbox"] {
+    appearance: none; -webkit-appearance: none;
+    width: 16px; height: 16px; flex-shrink: 0;
+    background: #0c0e17; border: 1px solid #434656;
+    display: inline-block; position: relative; cursor: pointer;
+  }
+  input[type="radio"]:checked, input[type="checkbox"]:checked {
+    background: #2e5bff; border-color: #2e5bff;
+    box-shadow: inset 0 0 0 3px #0c0e17;
+  }
+  input[type="radio"]:focus, input[type="checkbox"]:focus,
+  input[type="text"]:focus, input[type="number"]:focus, textarea:focus, select:focus {
+    outline: none; box-shadow: none; border-color: #2e5bff;
+  }
+</style>
+</head>
+<body class="bg-surface-container-lowest text-on-surface font-body text-body-md antialiased flex min-h-screen">
+
+<!-- ============ SIDEBAR (shared shell) ============ -->
+<aside class="hidden lg:flex w-64 shrink-0 flex-col border-r border-outline-variant bg-surface-container-lowest h-screen sticky top-0">
+  <a href="index.html" class="h-16 px-5 flex flex-col justify-center border-b border-outline-variant">
+    <span class="flex items-center gap-2">
+      <span class="w-2.5 h-2.5 bg-primary-container"></span>
+      <span class="font-display text-headline-md font-bold tracking-tight text-primary leading-none">KANDIDLY</span>
+    </span>
+    <span class="font-mono text-[10px] uppercase tracking-[0.25em] text-on-surface-variant mt-1 ml-[18px]">Voice console</span>
+  </a>
+  <div class="p-4 border-b border-outline-variant">
+    <a href="requisition-new.html" class="flex items-center justify-center gap-2 w-full py-3 bg-primary-container text-on-primary-container font-mono text-label-sm uppercase tracking-[0.15em] font-bold border border-primary-container hover:bg-transparent hover:text-primary transition-colors">
+      <span class="material-symbols-outlined text-[18px]">add</span>
+      New requisition
+    </a>
+  </div>
+  <nav class="flex-1 overflow-y-auto flex flex-col">
+    <a href="dashboard.html" class="flex items-center gap-3 px-5 py-4 text-on-surface-variant font-mono text-label-sm uppercase tracking-[0.15em] hover:bg-surface-container hover:text-on-surface transition-colors">
+      <span class="material-symbols-outlined text-[18px]">grid_view</span>
+      Dashboard
+    </a>
+    <a href="requisitions.html" class="flex items-center gap-3 px-5 py-4 bg-primary-container text-on-primary-container font-mono text-label-sm uppercase tracking-[0.15em] font-bold">
+      <span class="material-symbols-outlined text-[18px]" style="font-variation-settings:'FILL' 1">assignment</span>
+      Requisitions
+    </a>
+    <a href="#" class="flex items-center gap-3 px-5 py-4 text-on-surface-variant font-mono text-label-sm uppercase tracking-[0.15em] hover:bg-surface-container hover:text-on-surface transition-colors">
+      <span class="material-symbols-outlined text-[18px]">record_voice_over</span>
+      Interviews
+    </a>
+    <a href="#" class="flex items-center gap-3 px-5 py-4 text-on-surface-variant font-mono text-label-sm uppercase tracking-[0.15em] hover:bg-surface-container hover:text-on-surface transition-colors">
+      <span class="material-symbols-outlined text-[18px]">rule</span>
+      Rubrics
+    </a>
+    <a href="#" class="flex items-center gap-3 px-5 py-4 text-on-surface-variant font-mono text-label-sm uppercase tracking-[0.15em] hover:bg-surface-container hover:text-on-surface transition-colors">
+      <span class="material-symbols-outlined text-[18px]">bar_chart</span>
+      Analytics
+    </a>
+  </nav>
+  <div class="border-t border-outline-variant">
+    <a href="#" class="flex items-center gap-3 px-5 py-3 text-on-surface-variant font-mono text-label-sm uppercase tracking-[0.15em] hover:bg-surface-container hover:text-on-surface transition-colors">
+      <span class="material-symbols-outlined text-[18px]">settings</span>
+      Settings
+    </a>
+    <a href="#" class="flex items-center gap-3 px-5 py-3 text-on-surface-variant font-mono text-label-sm uppercase tracking-[0.15em] hover:bg-surface-container hover:text-on-surface transition-colors">
+      <span class="material-symbols-outlined text-[18px]">help</span>
+      Support
+    </a>
+  </div>
+  <div class="border-t border-outline-variant p-4">
+    <div class="flex items-center gap-3 p-2 border border-transparent hover:border-outline-variant hover:bg-surface-container cursor-pointer transition-colors">
+      <div class="w-9 h-9 shrink-0 bg-surface border border-outline-variant flex items-center justify-center font-display font-bold text-primary">JD</div>
+      <div class="flex flex-col min-w-0">
+        <span class="font-mono text-label-sm uppercase text-on-surface truncate">Jane Doe</span>
+        <span class="font-mono text-[10px] uppercase tracking-[0.15em] text-on-surface-variant">Recruiter</span>
+      </div>
+      <span class="material-symbols-outlined text-on-surface-variant ml-auto text-[18px]">unfold_more</span>
+    </div>
+  </div>
+</aside>
+
+<!-- ============ MAIN ============ -->
+<div class="flex-1 flex flex-col min-w-0 relative">
+
+  <!-- Mobile top bar -->
+  <div class="lg:hidden h-14 flex items-center justify-between px-4 border-b border-outline-variant bg-surface-container-lowest sticky top-0 z-40">
+    <span class="flex items-center gap-2">
+      <span class="w-2 h-2 bg-primary-container"></span>
+      <span class="font-display font-bold text-primary">KANDIDLY</span>
+    </span>
+    <span class="material-symbols-outlined text-on-surface-variant">menu</span>
+  </div>
+
+  <!-- Breadcrumb bar -->
+  <header class="h-16 shrink-0 border-b border-outline-variant flex items-center justify-between px-4 md:px-8 bg-surface-container-lowest sticky top-0 z-30">
+    <div class="flex items-center gap-3 font-mono text-label-sm uppercase tracking-[0.15em]">
+      <a href="requisitions.html" class="text-on-surface-variant hover:text-primary transition-colors">Requisitions</a>
+      <span class="text-outline-variant">/</span>
+      <span class="text-on-surface">New</span>
+    </div>
+    <span class="hidden md:flex items-center gap-2 font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface-variant">
+      <span class="w-2 h-2 bg-surface-container-highest"></span>
+      Draft · Autosaved 12s ago
+    </span>
+  </header>
+
+  <main class="flex-1 pb-24">
+    <div class="max-w-[960px] mx-auto border-x border-outline-variant min-h-full bg-surface-container-lowest">
+
+      <!-- Title block -->
+      <div class="p-6 md:p-10 border-b border-outline-variant bg-surface">
+        <p class="font-mono text-label-sm uppercase tracking-[0.2em] text-on-surface-variant mb-3">// REQUISITION_BUILDER</p>
+        <h1 class="font-display text-headline-lg-mobile md:text-headline-lg text-on-surface mb-2">New requisition</h1>
+        <p class="text-body-md text-on-surface-variant">Configure the role, screening form, and rubric. Deploy generates a single invite link.</p>
+      </div>
+
+      <!-- 01 · CORE DETAILS -->
+      <section class="p-6 md:p-10 border-b border-outline-variant">
+        <div class="flex items-center justify-between mb-8">
+          <h2 class="font-display text-headline-md text-on-surface">01 · Core details</h2>
+          <span class="font-mono text-label-sm uppercase tracking-[0.1em] text-primary border border-primary-container px-2 py-1">Required</span>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div class="flex flex-col gap-2">
+            <label class="font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface-variant">Job title</label>
+            <input type="text" value="Senior Frontend Engineer"
+                   class="bg-surface-container-lowest border border-outline-variant p-3 text-body-md text-on-surface placeholder:text-on-surface-variant/40">
+          </div>
+          <div class="flex flex-col gap-2">
+            <label class="font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface-variant">Department / team</label>
+            <input type="text" placeholder="e.g. Platform Engineering"
+                   class="bg-surface-container-lowest border border-outline-variant p-3 text-body-md text-on-surface placeholder:text-on-surface-variant/40">
+          </div>
+          <div class="flex flex-col gap-2">
+            <label class="font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface-variant">Location</label>
+            <input type="text" placeholder="e.g. Remote / Bengaluru"
+                   class="bg-surface-container-lowest border border-outline-variant p-3 text-body-md text-on-surface placeholder:text-on-surface-variant/40">
+          </div>
+          <div class="flex flex-col gap-2">
+            <label class="font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface-variant">Seniority</label>
+            <div class="grid grid-cols-3 gap-px bg-outline-variant border border-outline-variant">
+              <button class="py-3 bg-surface-container-lowest text-on-surface-variant font-mono text-label-sm uppercase hover:bg-surface-container transition-colors">Junior</button>
+              <button class="py-3 bg-surface-container-lowest text-on-surface-variant font-mono text-label-sm uppercase hover:bg-surface-container transition-colors">Mid</button>
+              <button class="py-3 bg-primary-container text-on-primary-container font-mono text-label-sm uppercase font-bold">Senior</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 02 · ROLE CONTEXT (error state showcase) -->
+      <section class="p-6 md:p-10 border-b border-outline-variant border-l-4 border-l-error bg-surface/50">
+        <div class="flex items-center justify-between mb-8">
+          <h2 class="font-display text-headline-md text-on-surface">02 · Role context</h2>
+          <span class="font-mono text-label-sm uppercase tracking-[0.1em] text-error flex items-center gap-1.5">
+            <span class="material-symbols-outlined text-[16px]">warning</span>
+            Needs attention
+          </span>
+        </div>
+        <div class="flex flex-col gap-6">
+          <div class="flex flex-col gap-2">
+            <label class="font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface-variant">Primary objective</label>
+            <textarea rows="4" placeholder="Describe the main goal of this role within the next 12 months…"
+                      class="bg-surface-container-lowest border border-outline-variant p-3 text-body-md text-on-surface placeholder:text-on-surface-variant/40 resize-none"></textarea>
+          </div>
+          <div class="flex flex-col gap-2">
+            <label class="font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface-variant">Must-have skills (comma separated)</label>
+            <input type="text" placeholder="React, TypeScript, GraphQL…"
+                   class="bg-surface-container-lowest border border-error p-3 text-body-md text-on-surface placeholder:text-on-surface-variant/40">
+            <p class="font-mono text-label-sm text-error">ERR_EMPTY_FIELD — required for engineering roles.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 03 · INTERVIEWER CONFIG -->
+      <section class="p-6 md:p-10 border-b border-outline-variant">
+        <div class="flex items-center justify-between mb-8">
+          <h2 class="font-display text-headline-md text-on-surface">03 · Interviewer config</h2>
+        </div>
+        <div class="flex flex-col gap-8">
+          <div class="flex flex-col gap-2">
+            <span class="font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface-variant">Tone</span>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-px bg-outline-variant border border-outline-variant">
+              <label class="flex items-center gap-3 p-4 bg-surface-container-lowest cursor-pointer hover:bg-surface-container transition-colors">
+                <input type="radio" name="tone">
+                <span class="flex flex-col">
+                  <span class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface">Conversational</span>
+                  <span class="text-body-md text-on-surface-variant">Warmer pacing, more encouragement.</span>
+                </span>
+              </label>
+              <label class="flex items-center gap-3 p-4 bg-surface cursor-pointer border-l-0">
+                <input type="radio" name="tone" checked>
+                <span class="flex flex-col">
+                  <span class="font-mono text-label-sm uppercase tracking-[0.1em] text-primary">Technical / strict</span>
+                  <span class="text-body-md text-on-surface-variant">Terse follow-ups, probes for depth.</span>
+                </span>
+              </label>
+            </div>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div class="flex flex-col gap-2">
+              <span class="font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface-variant">Target duration</span>
+              <div class="grid grid-cols-3 gap-px bg-outline-variant border border-outline-variant">
+                <button class="py-3 bg-surface-container-lowest text-on-surface-variant font-mono text-label-sm uppercase hover:bg-surface-container transition-colors">20 min</button>
+                <button class="py-3 bg-primary-container text-on-primary-container font-mono text-label-sm uppercase font-bold">45 min</button>
+                <button class="py-3 bg-surface-container-lowest text-on-surface-variant font-mono text-label-sm uppercase hover:bg-surface-container transition-colors">60 min</button>
+              </div>
+            </div>
+            <div class="flex flex-col gap-2">
+              <span class="font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface-variant">Integrity</span>
+              <div class="flex flex-col gap-px bg-outline-variant border border-outline-variant">
+                <label class="flex items-center gap-3 p-3 bg-surface-container-lowest cursor-pointer hover:bg-surface-container transition-colors">
+                  <input type="checkbox" checked>
+                  <span class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface">Consent-gated proctoring</span>
+                </label>
+                <label class="flex items-center gap-3 p-3 bg-surface-container-lowest cursor-pointer hover:bg-surface-container transition-colors">
+                  <input type="checkbox" checked>
+                  <span class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface">Identity check (selfie)</span>
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 04 · SCREENING FORM -->
+      <section class="p-6 md:p-10 border-b border-outline-variant">
+        <div class="flex items-center justify-between mb-8">
+          <h2 class="font-display text-headline-md text-on-surface">04 · Screening form</h2>
+          <span class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant">2 fields</span>
+        </div>
+        <div class="flex flex-col lg:flex-row gap-px bg-outline-variant border border-outline-variant">
+          <!-- Toolbox -->
+          <div class="lg:w-1/3 bg-surface-container-lowest p-4 flex flex-col gap-2">
+            <p class="font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface-variant mb-2">Add element</p>
+            <button class="flex items-center gap-3 p-3 border border-outline-variant font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface hover:border-primary-container hover:text-primary transition-colors">
+              <span class="material-symbols-outlined text-[18px]">short_text</span> Text field
+            </button>
+            <button class="flex items-center gap-3 p-3 border border-outline-variant font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface hover:border-primary-container hover:text-primary transition-colors">
+              <span class="material-symbols-outlined text-[18px]">notes</span> Text area
+            </button>
+            <button class="flex items-center gap-3 p-3 border border-outline-variant font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface hover:border-primary-container hover:text-primary transition-colors">
+              <span class="material-symbols-outlined text-[18px]">check_box</span> Multi-select
+            </button>
+            <button class="flex items-center gap-3 p-3 border border-outline-variant font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface hover:border-primary-container hover:text-primary transition-colors">
+              <span class="material-symbols-outlined text-[18px]">linear_scale</span> Range 1–10
+            </button>
+            <button class="flex items-center gap-3 p-3 border border-outline-variant font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface hover:border-primary-container hover:text-primary transition-colors">
+              <span class="material-symbols-outlined text-[18px]">calendar_today</span> Date picker
+            </button>
+            <button class="flex items-center gap-3 p-3 border border-outline-variant font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface hover:border-primary-container hover:text-primary transition-colors">
+              <span class="material-symbols-outlined text-[18px]">upload_file</span> File upload
+            </button>
+          </div>
+          <!-- Canvas with placed elements -->
+          <div class="lg:w-2/3 bg-surface p-4 flex flex-col gap-px min-h-[320px]">
+            <div class="group border border-outline-variant bg-surface-container-lowest p-4 flex items-start justify-between gap-4 cursor-grab">
+              <div class="flex items-start gap-3">
+                <span class="material-symbols-outlined text-[18px] text-outline mt-0.5">drag_indicator</span>
+                <div>
+                  <p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant mb-1">01 · Text field · Required</p>
+                  <p class="text-body-md text-on-surface">Years of production React experience?</p>
+                </div>
+              </div>
+              <button class="text-error hover:bg-error-container/30 p-1 transition-colors"><span class="material-symbols-outlined text-[18px]">delete</span></button>
+            </div>
+            <div class="group border border-outline-variant bg-surface-container-lowest p-4 flex items-start justify-between gap-4 cursor-grab">
+              <div class="flex items-start gap-3">
+                <span class="material-symbols-outlined text-[18px] text-outline mt-0.5">drag_indicator</span>
+                <div>
+                  <p class="font-mono text-label-sm uppercase tracking-[0.1em] text-on-surface-variant mb-1">02 · File upload · Required</p>
+                  <p class="text-body-md text-on-surface">Resume (PDF, max 10 MB)</p>
+                </div>
+              </div>
+              <button class="text-error hover:bg-error-container/30 p-1 transition-colors"><span class="material-symbols-outlined text-[18px]">delete</span></button>
+            </div>
+            <div class="flex-1 min-h-[96px] border border-dashed border-outline-variant flex items-center justify-center mt-px">
+              <p class="font-mono text-label-sm uppercase tracking-[0.2em] text-on-surface-variant/50">Drop element here</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 05 · ASSESSMENT RUBRIC -->
+      <section class="p-6 md:p-10">
+        <div class="flex items-center justify-between mb-8">
+          <h2 class="font-display text-headline-md text-on-surface">05 · Assessment rubric</h2>
+          <span class="font-mono text-label-sm uppercase tracking-[0.1em] text-primary border border-primary-container px-2 py-1">Σ 100%</span>
+        </div>
+        <div class="border border-outline-variant">
+          <!-- Table header -->
+          <div class="grid grid-cols-12 border-b border-outline-variant bg-surface">
+            <div class="col-span-7 p-3 border-r border-outline-variant font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface-variant">Criterion</div>
+            <div class="col-span-3 p-3 border-r border-outline-variant font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface-variant">Weight %</div>
+            <div class="col-span-2 p-3 font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface-variant text-center">Action</div>
+          </div>
+          <!-- Row 1 -->
+          <div class="grid grid-cols-12 border-b border-outline-variant bg-surface-container-lowest">
+            <div class="col-span-7 border-r border-outline-variant p-3 flex flex-col gap-2">
+              <input type="text" value="Technical depth" class="bg-transparent border-0 p-0 font-display text-body-lg text-on-surface">
+              <textarea rows="2" class="bg-surface border border-outline-variant p-2 text-body-md text-on-surface-variant resize-none" placeholder="What to judge and how…">Can they reason about trade-offs, failure modes, and scale — not just name tools?</textarea>
+            </div>
+            <div class="col-span-3 border-r border-outline-variant p-3">
+              <input type="number" value="40" class="w-full bg-surface border border-outline-variant p-2 font-mono text-headline-md text-on-surface text-center">
+            </div>
+            <div class="col-span-2 flex items-start justify-center p-3">
+              <button class="text-error hover:bg-error-container/30 p-2 transition-colors"><span class="material-symbols-outlined text-[18px]">delete</span></button>
+            </div>
+          </div>
+          <!-- Row 2 -->
+          <div class="grid grid-cols-12 border-b border-outline-variant bg-surface-container-lowest">
+            <div class="col-span-7 border-r border-outline-variant p-3 flex flex-col gap-2">
+              <input type="text" value="Debugging & incident ownership" class="bg-transparent border-0 p-0 font-display text-body-lg text-on-surface">
+              <textarea rows="2" class="bg-surface border border-outline-variant p-2 text-body-md text-on-surface-variant resize-none" placeholder="What to judge and how…">Specifics of a real incident: detection, hypothesis, fix, prevention.</textarea>
+            </div>
+            <div class="col-span-3 border-r border-outline-variant p-3">
+              <input type="number" value="35" class="w-full bg-surface border border-outline-variant p-2 font-mono text-headline-md text-on-surface text-center">
+            </div>
+            <div class="col-span-2 flex items-start justify-center p-3">
+              <button class="text-error hover:bg-error-container/30 p-2 transition-colors"><span class="material-symbols-outlined text-[18px]">delete</span></button>
+            </div>
+          </div>
+          <!-- Row 3 -->
+          <div class="grid grid-cols-12 border-b border-outline-variant bg-surface-container-lowest">
+            <div class="col-span-7 border-r border-outline-variant p-3 flex flex-col gap-2">
+              <input type="text" value="Communication" class="bg-transparent border-0 p-0 font-display text-body-lg text-on-surface">
+              <textarea rows="2" class="bg-surface border border-outline-variant p-2 text-body-md text-on-surface-variant resize-none" placeholder="What to judge and how…">Clear structure under follow-up pressure; says "I don't know" when true.</textarea>
+            </div>
+            <div class="col-span-3 border-r border-outline-variant p-3">
+              <input type="number" value="25" class="w-full bg-surface border border-outline-variant p-2 font-mono text-headline-md text-on-surface text-center">
+            </div>
+            <div class="col-span-2 flex items-start justify-center p-3">
+              <button class="text-error hover:bg-error-container/30 p-2 transition-colors"><span class="material-symbols-outlined text-[18px]">delete</span></button>
+            </div>
+          </div>
+          <!-- Total row -->
+          <div class="grid grid-cols-12 bg-surface">
+            <div class="col-span-7 p-3 border-r border-outline-variant font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface-variant text-right">Total weight</div>
+            <div class="col-span-3 p-3 border-r border-outline-variant font-mono text-headline-md text-primary text-center">100</div>
+            <div class="col-span-2"></div>
+          </div>
+        </div>
+        <button class="mt-4 flex items-center gap-2 px-6 py-3 border border-outline-variant font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface hover:border-primary-container hover:text-primary transition-colors">
+          <span class="material-symbols-outlined text-[18px]">add</span>
+          Add criterion
+        </button>
+      </section>
+    </div>
+  </main>
+
+  <!-- ============ STICKY ACTION BAR ============ -->
+  <div class="fixed bottom-0 right-0 left-0 lg:left-64 h-16 border-t border-outline-variant bg-surface z-40 flex items-center justify-between px-4 md:px-8">
+    <div class="flex items-center gap-2 font-mono text-label-sm uppercase tracking-[0.15em] text-error">
+      <span class="material-symbols-outlined text-[18px]" style="font-variation-settings:'FILL' 1">error</span>
+      <span class="hidden sm:inline">1 error blocks deploy</span>
+      <span class="sm:hidden">1 error</span>
+    </div>
+    <div class="flex items-center gap-px bg-outline-variant border border-outline-variant">
+      <button class="px-6 py-2.5 bg-surface font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface hover:bg-surface-container transition-colors">
+        Save draft
+      </button>
+      <button disabled class="px-6 py-2.5 bg-primary-container text-on-primary-container font-mono text-label-sm uppercase tracking-[0.15em] font-bold opacity-40 cursor-not-allowed flex items-center gap-2">
+        Deploy interview
+        <span class="material-symbols-outlined text-[16px]">rocket_launch</span>
+      </button>
+    </div>
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kandidly — Engineered Interviews</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Hanken+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=block" rel="stylesheet">
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      colors: {
+        "surface": "#11131c",
+        "surface-bright": "#373943",
+        "surface-container-lowest": "#0c0e17",
+        "surface-container-low": "#191b24",
+        "surface-container": "#1d1f29",
+        "surface-container-high": "#282933",
+        "surface-container-highest": "#33343e",
+        "on-surface": "#e2e1ef",
+        "on-surface-variant": "#c4c5d9",
+        "outline": "#8e90a2",
+        "outline-variant": "#434656",
+        "primary": "#b8c3ff",
+        "on-primary": "#002388",
+        "primary-container": "#2e5bff",
+        "on-primary-container": "#efefff",
+        "secondary-container": "#454747",
+        "on-secondary-container": "#b4b5b5",
+        "error": "#ffb4ab",
+        "on-error": "#690005",
+        "error-container": "#93000a",
+        "on-error-container": "#ffdad6"
+      },
+      fontFamily: {
+        display: ['"Space Grotesk"', 'sans-serif'],
+        body: ['"Hanken Grotesk"', 'sans-serif'],
+        mono: ['"JetBrains Mono"', 'monospace']
+      },
+      fontSize: {
+        "display-lg": ["64px", { lineHeight: "1.1", letterSpacing: "-0.04em", fontWeight: "700" }],
+        "headline-lg": ["32px", { lineHeight: "1.2", letterSpacing: "-0.02em", fontWeight: "600" }],
+        "headline-lg-mobile": ["28px", { lineHeight: "1.2", fontWeight: "600" }],
+        "headline-md": ["24px", { lineHeight: "1.3", fontWeight: "500" }],
+        "body-lg": ["18px", { lineHeight: "1.6", fontWeight: "400" }],
+        "body-md": ["16px", { lineHeight: "1.6", fontWeight: "400" }],
+        "label-sm": ["12px", { lineHeight: "1.4", fontWeight: "500" }]
+      },
+      maxWidth: { "container-max": "1440px" }
+    }
+  }
+}
+</script>
+<style>
+  * { border-radius: 0 !important; }
+  ::selection { background: #2e5bff; color: #efefff; }
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: #0c0e17; }
+  ::-webkit-scrollbar-thumb { background: #434656; }
+  ::-webkit-scrollbar-thumb:hover { background: #2e5bff; }
+  @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+  .blink { animation: blink 1.4s steps(2, end) infinite; }
+  @keyframes caret { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+  .caret { animation: caret 1s steps(2, end) infinite; }
+</style>
+</head>
+<body class="bg-surface-container-lowest text-on-surface font-body text-body-md antialiased">
+
+<!-- ============ TOP NAV ============ -->
+<nav class="sticky top-0 z-50 h-16 border-b border-outline-variant bg-surface-container-lowest">
+  <div class="mx-auto max-w-container-max h-full flex items-stretch justify-between border-x border-outline-variant">
+    <a href="index.html" class="flex items-center gap-2 px-4 md:px-8 border-r border-outline-variant">
+      <span class="w-2.5 h-2.5 bg-primary-container"></span>
+      <span class="font-display text-headline-md font-bold tracking-tight text-primary">KANDIDLY</span>
+    </a>
+    <div class="hidden md:flex items-stretch">
+      <a href="#platform" class="flex items-center px-5 font-mono text-label-sm uppercase tracking-[0.15em] text-primary border-b-2 border-primary-container">Platform</a>
+      <a href="#features" class="flex items-center px-5 font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-colors">Features</a>
+      <a href="#sequence" class="flex items-center px-5 font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-colors">How it works</a>
+      <a href="#" class="flex items-center px-5 font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-colors">Docs</a>
+    </div>
+    <a href="dashboard.html" class="flex items-center gap-2 px-4 md:px-8 border-l border-outline-variant font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface hover:bg-primary-container hover:text-on-primary-container transition-colors">
+      Console login
+      <span class="material-symbols-outlined text-[16px]">arrow_forward</span>
+    </a>
+  </div>
+</nav>
+
+<main class="mx-auto max-w-container-max border-x border-outline-variant">
+
+  <!-- ============ HERO ============ -->
+  <section id="platform" class="grid grid-cols-1 lg:grid-cols-2 border-b border-outline-variant">
+    <!-- Left: copy -->
+    <div class="border-b lg:border-b-0 lg:border-r border-outline-variant p-4 md:p-12 flex flex-col justify-center gap-8">
+      <div class="inline-flex items-center gap-3 self-start border border-outline-variant px-3 py-2">
+        <span class="w-2 h-2 bg-primary-container blink"></span>
+        <span class="font-mono text-label-sm uppercase tracking-[0.2em] text-on-surface-variant">AI voice interviewer // v1.0</span>
+      </div>
+      <h1 class="font-display text-headline-lg-mobile md:text-display-lg font-bold text-on-surface">
+        Engineered<br>interviews.
+      </h1>
+      <p class="text-body-lg text-on-surface-variant max-w-md border-l-2 border-primary-container pl-4">
+        Kandidly runs structured voice interviews for every candidate — same questions, same rubric, zero scheduling. Your team reads scored, quote-backed reports instead of sitting in screens.
+      </p>
+      <div class="flex flex-wrap gap-px bg-outline-variant self-start border border-outline-variant">
+        <a href="dashboard.html" class="px-8 py-4 bg-primary-container text-on-primary-container font-mono text-label-sm uppercase tracking-[0.15em] font-bold hover:bg-surface-container-lowest hover:text-primary transition-colors">
+          Start hiring
+        </a>
+        <a href="#sequence" class="px-8 py-4 bg-surface-container-lowest text-on-surface font-mono text-label-sm uppercase tracking-[0.15em] hover:bg-surface-container transition-colors">
+          See the sequence
+        </a>
+      </div>
+      <p class="font-mono text-label-sm text-on-surface-variant/60 uppercase tracking-[0.1em]">No credit card. First 10 interviews free.</p>
+    </div>
+
+    <!-- Right: live console wireframe (pure CSS, no images) -->
+    <div class="hidden lg:flex flex-col bg-surface min-h-[560px]">
+      <div class="h-10 flex items-center justify-between px-4 border-b border-outline-variant">
+        <span class="font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface-variant">SESSION // CAN-8921A</span>
+        <span class="font-mono text-label-sm uppercase tracking-[0.15em] text-primary flex items-center gap-2">
+          <span class="w-2 h-2 bg-primary-container blink"></span>REC 00:42:17
+        </span>
+      </div>
+      <div id="waveform" class="h-24 border-b border-outline-variant px-4 flex items-end gap-[3px] py-3"></div>
+      <div class="flex-1 p-5 font-mono text-label-sm leading-relaxed space-y-4 overflow-hidden">
+        <p><span class="text-primary">AGENT &gt;</span> <span class="text-on-surface">Walk me through the worst production incident you owned end to end.</span></p>
+        <p><span class="text-on-surface-variant">CAND&nbsp; &gt;</span> <span class="text-on-surface-variant">We had a race condition in the payment retry queue — two workers claimed the same job because the lease…</span></p>
+        <p><span class="text-primary">AGENT &gt;</span> <span class="text-on-surface">How did you prove the lease was the root cause and not the idempotency key?</span></p>
+        <p class="text-on-surface-variant/50">&gt; MAPPING RESPONSE TO RUBRIC · DEBUGGING_DEPTH<span class="caret">█</span></p>
+      </div>
+      <div class="grid grid-cols-3 gap-px bg-outline-variant border-t border-outline-variant">
+        <div class="bg-surface-container-lowest p-4">
+          <p class="font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface-variant mb-1">Signal</p>
+          <p class="font-display text-headline-md text-on-surface">Strong</p>
+        </div>
+        <div class="bg-surface-container-lowest p-4">
+          <p class="font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface-variant mb-1">Rubric</p>
+          <p class="font-display text-headline-md text-on-surface">4<span class="text-on-surface-variant">/6</span></p>
+        </div>
+        <div class="bg-surface-container-lowest p-4">
+          <p class="font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface-variant mb-1">Score</p>
+          <p class="font-display text-headline-md text-primary">Pending</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ PROOF STRIP ============ -->
+  <section class="border-b border-outline-variant">
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-px bg-outline-variant">
+      <div class="bg-surface-container-lowest p-6 md:p-8">
+        <p class="font-display text-headline-lg text-on-surface">1,248</p>
+        <p class="font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface-variant mt-2">Interviews conducted</p>
+      </div>
+      <div class="bg-surface-container-lowest p-6 md:p-8">
+        <p class="font-display text-headline-lg text-on-surface">3.4×</p>
+        <p class="font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface-variant mt-2">Faster screening cycles</p>
+      </div>
+      <div class="bg-surface-container-lowest p-6 md:p-8">
+        <p class="font-display text-headline-lg text-primary">0</p>
+        <p class="font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface-variant mt-2">Scheduling emails sent</p>
+      </div>
+      <div class="bg-surface-container-lowest p-6 md:p-8">
+        <p class="font-display text-headline-lg text-on-surface">96%</p>
+        <p class="font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface-variant mt-2">Candidate completion</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ FEATURES ============ -->
+  <section id="features" class="border-b border-outline-variant">
+    <div class="p-4 border-b border-outline-variant bg-surface">
+      <h2 class="font-mono text-label-sm uppercase tracking-[0.2em] text-on-surface">// CORE_INFRASTRUCTURE</h2>
+    </div>
+    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-px bg-outline-variant">
+      <div class="group bg-surface-container-lowest h-[300px] p-6 flex flex-col justify-between hover:bg-surface transition-colors">
+        <div class="flex justify-between items-start">
+          <span class="font-mono text-label-sm text-on-surface-variant/60">01</span>
+          <span class="material-symbols-outlined text-primary group-hover:translate-x-1 transition-transform">rule</span>
+        </div>
+        <div>
+          <h3 class="font-display text-headline-md text-on-surface mb-2">Rubric-first evaluation</h3>
+          <p class="text-body-md text-on-surface-variant">Every answer is scored against weighted criteria you define — not an interviewer's mood.</p>
+        </div>
+      </div>
+      <div class="group bg-surface-container-lowest h-[300px] p-6 flex flex-col justify-between hover:bg-surface transition-colors">
+        <div class="flex justify-between items-start">
+          <span class="font-mono text-label-sm text-on-surface-variant/60">02</span>
+          <span class="material-symbols-outlined text-primary group-hover:translate-x-1 transition-transform">record_voice_over</span>
+        </div>
+        <div>
+          <h3 class="font-display text-headline-md text-on-surface mb-2">Adaptive voice agent</h3>
+          <p class="text-body-md text-on-surface-variant">Follows up, probes depth, and moves on — a real conversation, available any hour.</p>
+        </div>
+      </div>
+      <div class="group bg-surface-container-lowest h-[300px] p-6 flex flex-col justify-between hover:bg-surface transition-colors">
+        <div class="flex justify-between items-start">
+          <span class="font-mono text-label-sm text-on-surface-variant/60">03</span>
+          <span class="material-symbols-outlined text-primary group-hover:translate-x-1 transition-transform">fact_check</span>
+        </div>
+        <div>
+          <h3 class="font-display text-headline-md text-on-surface mb-2">Quote-backed reports</h3>
+          <p class="text-body-md text-on-surface-variant">Scores cite verbatim transcript evidence. Trust the number or audit it in one click.</p>
+        </div>
+      </div>
+      <div class="group bg-surface-container-lowest h-[300px] p-6 flex flex-col justify-between hover:bg-surface transition-colors">
+        <div class="flex justify-between items-start">
+          <span class="font-mono text-label-sm text-on-surface-variant/60">04</span>
+          <span class="material-symbols-outlined text-primary group-hover:translate-x-1 transition-transform">shield_person</span>
+        </div>
+        <div>
+          <h3 class="font-display text-headline-md text-on-surface mb-2">Integrity built in</h3>
+          <p class="text-body-md text-on-surface-variant">Consent-gated proctoring, identity checks, and DPDP-compliant retention by default.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ HOW IT WORKS ============ -->
+  <section id="sequence" class="border-b border-outline-variant">
+    <div class="p-4 border-b border-outline-variant bg-surface">
+      <h2 class="font-mono text-label-sm uppercase tracking-[0.2em] text-on-surface">// DEPLOYMENT_SEQUENCE</h2>
+    </div>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-px bg-outline-variant">
+      <div class="bg-surface-container-lowest p-6 md:p-8 flex flex-col gap-4">
+        <span class="font-display text-display-lg text-outline-variant leading-none">01</span>
+        <h3 class="font-display text-headline-md text-on-surface">Define</h3>
+        <p class="text-body-md text-on-surface-variant">Set the role, screening form, and weighted rubric in the requisition builder. Publish when the weights hit 100%.</p>
+        <a href="requisition-new.html" class="mt-auto self-start font-mono text-label-sm uppercase tracking-[0.15em] text-primary hover:text-on-surface transition-colors">Open builder →</a>
+      </div>
+      <div class="bg-surface-container-lowest p-6 md:p-8 flex flex-col gap-4">
+        <span class="font-display text-display-lg text-outline-variant leading-none">02</span>
+        <h3 class="font-display text-headline-md text-on-surface">Deploy</h3>
+        <p class="text-body-md text-on-surface-variant">Share one invite link. Candidates apply, upload a resume, and take the voice interview whenever they're ready.</p>
+        <span class="mt-auto font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface-variant/60">kandid.ly/i/ENG-001</span>
+      </div>
+      <div class="bg-surface-container-lowest p-6 md:p-8 flex flex-col gap-4">
+        <span class="font-display text-display-lg text-outline-variant leading-none">03</span>
+        <h3 class="font-display text-headline-md text-on-surface">Decide</h3>
+        <p class="text-body-md text-on-surface-variant">Scored reports with transcript evidence land in your console. Review, override, and shortlist in minutes.</p>
+        <a href="dashboard.html" class="mt-auto self-start font-mono text-label-sm uppercase tracking-[0.15em] text-primary hover:text-on-surface transition-colors">View console →</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ CTA BAND ============ -->
+  <section class="border-b border-outline-variant bg-surface">
+    <div class="p-8 md:p-16 flex flex-col md:flex-row md:items-end justify-between gap-8">
+      <div>
+        <p class="font-mono text-label-sm uppercase tracking-[0.2em] text-on-surface-variant mb-4">// READY_STATE</p>
+        <h2 class="font-display text-headline-lg-mobile md:text-headline-lg text-on-surface max-w-xl">Standardize the interview.<br><span class="text-primary">Keep the judgment.</span></h2>
+      </div>
+      <a href="dashboard.html" class="self-start md:self-auto px-10 py-5 bg-primary-container text-on-primary-container font-mono text-label-sm uppercase tracking-[0.15em] font-bold border border-primary-container hover:bg-transparent hover:text-primary transition-colors">
+        Deploy Kandidly
+      </a>
+    </div>
+  </section>
+</main>
+
+<!-- ============ FOOTER ============ -->
+<footer class="mx-auto max-w-container-max border-x border-b border-outline-variant">
+  <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 p-8">
+    <div class="flex items-center gap-2">
+      <span class="w-2.5 h-2.5 bg-primary-container"></span>
+      <span class="font-display text-headline-md font-bold tracking-tight text-primary">KANDIDLY</span>
+    </div>
+    <div class="flex flex-wrap gap-6">
+      <a href="#" class="font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface-variant hover:text-primary transition-colors">Privacy</a>
+      <a href="#" class="font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface-variant hover:text-primary transition-colors">Terms</a>
+      <a href="#" class="font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface-variant hover:text-primary transition-colors">Security</a>
+      <a href="#" class="font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface-variant hover:text-primary transition-colors">Status</a>
+    </div>
+    <p class="font-mono text-label-sm uppercase tracking-[0.15em] text-on-surface-variant/60">© 2026 Kandidly. All systems nominal.</p>
+  </div>
+</footer>
+
+<script>
+  // Waveform bars — deterministic heights, cobalt for the "active" tail
+  const wf = document.getElementById('waveform');
+  if (wf) {
+    const hs = [18,32,24,48,62,40,70,55,36,80,64,44,58,30,22,46,68,84,52,38,26,60,74,50,34,66,42,78,56,28,88,72,48,60,36,54,44,70,58,40];
+    hs.forEach((h, i) => {
+      const b = document.createElement('div');
+      b.className = 'flex-1 ' + (i >= hs.length - 8 ? 'bg-primary-container' : 'bg-outline-variant');
+      b.style.height = h + '%';
+      wf.appendChild(b);
+    });
+  }
+</script>
+</body>
+</html>

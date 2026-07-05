@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+
+# Node / web
+node_modules/
+web/dist/
+*.local
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+infra/.env
+!infra/.env.example
+
+# Models / large artifacts
+*.onnx
+models/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local data
+data/
+*.log

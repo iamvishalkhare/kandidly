@@ -1,0 +1,145 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Hanken+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /*
+     * The Brutalist Blueprint — docs/design/DESIGN.md
+     * M3-style tokens. Dark-only.
+     */
+    --surface:                   #11131c;
+    --surface-bright:            #373943;
+    --surface-container-lowest:  #0c0e17;
+    --surface-container-low:     #191b24;
+    --surface-container:         #1d1f29;
+    --surface-container-high:    #282933;
+    --surface-container-highest: #33343e;
+    --on-surface:                #e2e1ef;
+    --on-surface-variant:        #c4c5d9;
+    --outline:                   #8e90a2;
+    --outline-variant:           #434656;
+    --primary:                   #b8c3ff;
+    --on-primary:                #002388;
+    --primary-container:         #2e5bff;
+    --on-primary-container:      #efefff;
+    --inverse-primary:           #124af0;
+    --error:                     #ffb4ab;
+    --on-error:                  #690005;
+    --error-container:           #93000a;
+    --on-error-container:        #ffdad6;
+
+    /* Legacy aliases — existing pages reference these; keep them pointed
+       at the blueprint palette so everything inherits the new look. */
+    --background:   var(--surface-container-lowest);
+    --surface-hover: var(--surface-container);
+    --border:       var(--outline-variant);
+    --border-focus: var(--primary-container);
+
+    --text-primary:   var(--on-surface);
+    --text-secondary: var(--on-surface-variant);
+    --text-muted:     var(--outline);
+
+    /* Accent = cobalt. Sole functional accent. */
+    --accent:         var(--primary-container);
+    --accent-muted:   rgba(46, 91, 255, 0.12);
+    --accent-hover:   var(--inverse-primary);
+
+    /* Semantic status chips (state semantics kept, retoned flat) */
+    --emerald-chip-bg:  rgba(52, 211, 153, 0.08);
+    --emerald-chip-text:#34d399;
+    --amber-chip-bg:    rgba(251, 191, 36, 0.08);
+    --amber-chip-text:  #fbbf24;
+    --red-chip-bg:      rgba(255, 180, 171, 0.08);
+    --red-chip-text:    var(--error);
+    --blue-chip-bg:     rgba(46, 91, 255, 0.10);
+    --blue-chip-text:   var(--primary);
+    --violet-chip-bg:   rgba(184, 195, 255, 0.08);
+    --violet-chip-text: var(--primary);
+
+    /* Structure over decoration: no radius, no shadows. */
+    --radius: 0px;
+    --shadow: none;
+  }
+
+  * {
+    box-sizing: border-box;
+    border-color: var(--outline-variant);
+  }
+
+  body {
+    background-color: var(--surface-container-lowest);
+    color: var(--on-surface);
+    font-family: 'Hanken Grotesk', sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  ::selection {
+    background-color: var(--primary-container);
+    color: var(--on-primary-container);
+  }
+
+  ::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--surface-container-lowest);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--outline-variant);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--primary-container);
+  }
+}
+
+@layer utilities {
+  .text-primary   { color: var(--text-primary); }
+  .text-secondary { color: var(--text-secondary); }
+  .text-muted     { color: var(--text-muted); }
+
+  /* JetBrains Mono metadata label — the blueprint's structural voice */
+  .label-mono {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.4;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+  }
+
+  /* Blinking square status indicator (terminal-style step blink) */
+  .blink {
+    animation: blink 1.4s steps(2, end) infinite;
+  }
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.25; }
+  }
+
+  /* Skeleton shimmer */
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.04) 0%,
+      rgba(255, 255, 255, 0.08) 50%,
+      rgba(255, 255, 255, 0.04) 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+  }
+
+  @keyframes shimmer {
+    0%   { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+
+  /* Tabular numbers for data */
+  .tabular { font-variant-numeric: tabular-nums; }
+}
