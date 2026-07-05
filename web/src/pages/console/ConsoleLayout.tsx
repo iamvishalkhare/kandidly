@@ -44,10 +44,13 @@ export default function ConsoleLayout({ children }: { children: React.ReactNode 
 
         {/* CTA */}
         <div className="p-4 border-b border-outline-variant">
-          <button className="flex items-center justify-center gap-2 w-full py-2.5 bg-primary-container text-on-primary-container label-mono font-bold border border-primary-container hover:bg-transparent hover:text-primary-fixed-dim transition-colors duration-150">
+          <Link
+            to="/console/requisitions/new"
+            className="flex items-center justify-center gap-2 w-full py-2.5 bg-primary-container text-on-primary-container label-mono font-bold border border-primary-container hover:bg-transparent hover:text-primary-fixed-dim transition-colors duration-150"
+          >
             <Plus size={14} />
             New Requisition
-          </button>
+          </Link>
         </div>
 
         {/* Primary nav */}

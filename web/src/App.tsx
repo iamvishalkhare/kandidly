@@ -25,6 +25,7 @@ import CandidateDone     from './pages/candidate/Done';
 import AdminDashboard    from './pages/admin/Dashboard';
 import ConsoleDashboard  from './pages/console/Dashboard';
 import ConsoleRequisitions from './pages/console/Requisitions';
+import RequisitionBuilder from './pages/console/RequisitionBuilder';
 import RequisitionsList  from './pages/admin/RequisitionsList';
 import RequisitionDetail from './pages/admin/RequisitionDetail';
 import ApplicationDetail from './pages/admin/ApplicationDetail';
@@ -249,6 +250,7 @@ function AppInner() {
       {/* Console (standalone pages with their own layout) */}
       <Route path="/console" element={<ConsoleDashboard />} />
       <Route path="/console/requisitions" element={<ConsoleRequisitions />} />
+      <Route path="/console/requisitions/new" element={<RequisitionBuilder />} />
 
       {/* Candidate (public-facing) */}
       <Route path="/i/:token"                   element={<CandidateLanding />} />

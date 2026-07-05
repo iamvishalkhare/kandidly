@@ -4,6 +4,7 @@
  */
 
 import { useState, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { Search, SlidersHorizontal, Plus } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import ConsoleLayout from './ConsoleLayout';
@@ -243,10 +244,13 @@ export default function ConsoleRequisitions() {
             Filters
           </button>
         </div>
-        <button className="h-10 px-6 bg-primary-container text-on-primary-container label-mono font-bold flex items-center gap-2 border border-primary-container hover:bg-transparent hover:text-primary-fixed-dim transition-colors duration-150">
+        <Link
+          to="/console/requisitions/new"
+          className="h-10 px-6 bg-primary-container text-on-primary-container label-mono font-bold flex items-center gap-2 border border-primary-container hover:bg-transparent hover:text-primary-fixed-dim transition-colors duration-150"
+        >
           <Plus size={16} />
           New Requisition
-        </button>
+        </Link>
       </header>
 
       {/* Content */}
