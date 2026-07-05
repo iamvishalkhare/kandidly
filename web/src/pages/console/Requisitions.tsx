@@ -3,11 +3,13 @@
  * Interlocking card grid with LIVE/OFFLINE toggles, search, and filters.
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { Search, SlidersHorizontal, Plus } from 'lucide-react';
+import { Check, Copy, Search, SlidersHorizontal, Plus } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import ConsoleLayout from './ConsoleLayout';
+
+type StatusFilter = 'all' | 'live' | 'offline';
 
 /* -------------------------------------------------------------------------- */
 /*  Mock data                                                                 */
@@ -18,7 +20,8 @@ interface Requisition {
   code: string;
   title: string;
   domain: string;
-  location: string;
+  technicalRequirements: string[];
+  interviewToken: string;
   openDate: string;
   closeDate: string;
   clicks: number;
@@ -29,53 +32,81 @@ interface Requisition {
 const MOCK_REQUISITIONS: Requisition[] = [
   {
     id: 'req-1', code: 'ENG-001', title: 'Senior AI Engineer',
-    domain: 'Machine Learning', location: 'Remote / NYC',
+    domain: 'Machine Learning', technicalRequirements: ['Python', 'PyTorch', 'RAG', 'Vector DBs'],
+    interviewToken: 'eng-001-senior-ai',
     openDate: '24/05/2026', closeDate: '15/07/2026',
     clicks: 142, completed: 12, live: true,
   },
   {
     id: 'req-2', code: 'DES-042', title: 'Product Designer',
-    domain: 'Product', location: 'London',
+    domain: 'Product', technicalRequirements: ['Figma', 'Design Systems', 'Prototyping'],
+    interviewToken: 'des-042-product-designer',
     openDate: '28/05/2026', closeDate: 'N/A',
     clicks: 89, completed: 4, live: true,
   },
   {
     id: 'req-3', code: 'MKT-011', title: 'Growth Manager',
-    domain: 'Marketing', location: 'San Francisco',
+    domain: 'Marketing', technicalRequirements: ['GA4', 'SQL', 'Lifecycle Automation'],
+    interviewToken: 'mkt-011-growth-manager',
     openDate: '10/04/2026', closeDate: '01/06/2026',
     clicks: 210, completed: 0, live: false,
   },
   {
     id: 'req-4', code: 'ENG-017', title: 'Frontend Engineer',
-    domain: 'Engineering', location: 'Remote / Berlin',
+    domain: 'Engineering', technicalRequirements: ['React', 'TypeScript', 'Accessibility'],
+    interviewToken: 'eng-017-frontend',
     openDate: '02/06/2026', closeDate: 'N/A',
     clicks: 67, completed: 8, live: true,
   },
   {
     id: 'req-5', code: 'DAT-003', title: 'Data Scientist',
-    domain: 'Data Science', location: 'Remote / Singapore',
+    domain: 'Data Science', technicalRequirements: ['Python', 'SQL', 'Forecasting', 'ML Ops'],
+    interviewToken: 'dat-003-data-scientist',
     openDate: '15/05/2026', closeDate: '30/07/2026',
     clicks: 195, completed: 15, live: true,
   },
   {
     id: 'req-6', code: 'OPS-008', title: 'DevOps Lead',
-    domain: 'Infrastructure', location: 'Austin, TX',
+    domain: 'Infrastructure', technicalRequirements: ['Kubernetes', 'Terraform', 'AWS', 'CI/CD'],
+    interviewToken: 'ops-008-devops-lead',
     openDate: '01/03/2026', closeDate: '15/05/2026',
     clicks: 312, completed: 0, live: false,
   },
   {
     id: 'req-7', code: 'ENG-023', title: 'Backend Engineer',
-    domain: 'Engineering', location: 'Remote',
+    domain: 'Engineering', technicalRequirements: ['Node.js', 'PostgreSQL', 'API Design'],
+    interviewToken: 'eng-023-backend',
     openDate: '18/06/2026', closeDate: 'N/A',
     clicks: 34, completed: 2, live: true,
   },
   {
     id: 'req-8', code: 'PM-005', title: 'Product Manager',
-    domain: 'Product', location: 'NYC',
+    domain: 'Product', technicalRequirements: ['Analytics', 'APIs', 'Agile Delivery'],
+    interviewToken: 'pm-005-product-manager',
     openDate: '20/06/2026', closeDate: 'N/A',
     clicks: 51, completed: 3, live: true,
   },
 ];
+
+function getInterviewUrl(token: string) {
+  return `${window.location.origin}/i/${token}`;
+}
+
+async function copyToClipboard(text: string) {
+  if (navigator.clipboard && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand('copy');
+  textarea.remove();
+}
 
 /* -------------------------------------------------------------------------- */
 /*  Requisition Card                                                          */
@@ -89,12 +120,22 @@ function ReqCard({
   onToggle: (id: string) => void;
 }) {
   const [flash, setFlash] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const visibleRequirements = req.technicalRequirements.slice(0, 3);
+  const hiddenRequirementCount = req.technicalRequirements.length - visibleRequirements.length;
+  const interviewUrl = getInterviewUrl(req.interviewToken);
 
   const handleToggle = () => {
     setFlash(true);
     onToggle(req.id);
     // Remove flash class after animation completes
     setTimeout(() => setFlash(false), 300);
+  };
+
+  const handleCopyInterviewUrl = async () => {
+    await copyToClipboard(interviewUrl);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1800);
   };
 
   return (
@@ -124,23 +165,39 @@ function ReqCard({
             {req.title}
           </h2>
         </div>
-        <button
-          onClick={handleToggle}
-          className={cn(
-            'px-3 py-1 label-mono flex items-center gap-2 select-none transition-colors duration-200',
-            req.live
-              ? 'bg-primary-container text-on-primary-container'
-              : 'bg-surface-container-lowest text-on-surface-variant border border-outline-variant',
-          )}
-        >
-          <span
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleCopyInterviewUrl}
             className={cn(
-              'size-2',
-              req.live ? 'bg-[var(--emerald-chip-text)] blink' : 'bg-outline',
+              'size-8 border border-outline-variant flex items-center justify-center transition-colors duration-150',
+              copied
+                ? 'bg-surface-container text-primary-fixed-dim'
+                : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface',
             )}
-          />
-          {req.live ? 'LIVE' : 'OFFLINE'}
-        </button>
+            title={copied ? 'Interview URL copied' : `Copy interview URL: ${interviewUrl}`}
+            aria-label={copied ? 'Interview URL copied' : 'Copy interview URL'}
+          >
+            {copied ? <Check size={14} /> : <Copy size={14} />}
+          </button>
+          <button
+            onClick={handleToggle}
+            className={cn(
+              'px-3 py-1 label-mono flex items-center gap-2 select-none transition-colors duration-200',
+              req.live
+                ? 'bg-primary-container text-on-primary-container'
+                : 'bg-surface-container-lowest text-on-surface-variant border border-outline-variant',
+            )}
+          >
+            <span
+              className={cn(
+                'size-2',
+                req.live ? 'bg-[var(--emerald-chip-text)] blink' : 'bg-outline',
+              )}
+            />
+            {req.live ? 'LIVE' : 'OFFLINE'}
+          </button>
+        </div>
       </div>
 
       {/* Card body — metadata grid */}
@@ -157,11 +214,30 @@ function ReqCard({
               {req.domain}
             </p>
           </div>
-          <div>
-            <p className="label-mono text-on-surface-variant mb-1">Location</p>
-            <p className={cn('text-body-md', req.live ? 'text-on-surface' : 'text-on-surface-variant')}>
-              {req.location}
-            </p>
+          <div className="flex flex-wrap items-start gap-1.5">
+            {visibleRequirements.map(requirement => (
+              <span
+                key={requirement}
+                className={cn(
+                  'border border-outline-variant bg-surface-container-lowest px-2 py-1 label-mono leading-none',
+                  req.live ? 'text-on-surface' : 'text-on-surface-variant',
+                )}
+              >
+                {requirement}
+              </span>
+            ))}
+            {hiddenRequirementCount > 0 && (
+              <span
+                className={cn(
+                  'border border-outline-variant bg-surface-container px-2 py-1 label-mono leading-none',
+                  req.live ? 'text-primary-fixed-dim' : 'text-on-surface-variant',
+                )}
+                aria-label={`${hiddenRequirementCount} more technical requirements`}
+                title={req.technicalRequirements.slice(3).join(', ')}
+              >
+                +{hiddenRequirementCount}
+              </span>
+            )}
           </div>
           <div>
             <p className="label-mono text-on-surface-variant mb-1">Open Date</p>
@@ -176,6 +252,7 @@ function ReqCard({
             </p>
           </div>
         </div>
+
       </div>
 
       {/* Card footer — stats */}
@@ -204,6 +281,12 @@ function ReqCard({
 export default function ConsoleRequisitions() {
   const [reqs, setReqs] = useState<Requisition[]>(MOCK_REQUISITIONS);
   const [search, setSearch] = useState('');
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [requirementsOpen, setRequirementsOpen] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [titleFilter, setTitleFilter] = useState('');
+  const [domainFilter, setDomainFilter] = useState('');
+  const [requirementFilters, setRequirementFilters] = useState<string[]>([]);
 
   const toggleStatus = useCallback((id: string) => {
     setReqs(prev =>
@@ -211,14 +294,69 @@ export default function ConsoleRequisitions() {
     );
   }, []);
 
-  const filtered = search.trim()
-    ? reqs.filter(
-        r =>
-          r.title.toLowerCase().includes(search.toLowerCase()) ||
-          r.code.toLowerCase().includes(search.toLowerCase()) ||
-          r.domain.toLowerCase().includes(search.toLowerCase()),
-      )
-    : reqs;
+  const domains = useMemo(
+    () => Array.from(new Set(reqs.map(req => req.domain))).sort((a, b) => a.localeCompare(b)),
+    [reqs],
+  );
+  const jobTitles = useMemo(
+    () => Array.from(new Set(reqs.map(req => req.title))).sort((a, b) => a.localeCompare(b)),
+    [reqs],
+  );
+  const technicalRequirements = useMemo(
+    () =>
+      Array.from(new Set(reqs.flatMap(req => req.technicalRequirements))).sort((a, b) =>
+        a.localeCompare(b),
+      ),
+    [reqs],
+  );
+
+  const toggleRequirementFilter = (requirement: string) => {
+    setRequirementFilters(prev =>
+      prev.includes(requirement)
+        ? prev.filter(item => item !== requirement)
+        : [...prev, requirement],
+    );
+  };
+
+  const clearFilters = () => {
+    setStatusFilter('all');
+    setTitleFilter('');
+    setDomainFilter('');
+    setRequirementFilters([]);
+    setRequirementsOpen(false);
+  };
+
+  const hasFilters =
+    statusFilter !== 'all' ||
+    titleFilter.trim().length > 0 ||
+    domainFilter.trim().length > 0 ||
+    requirementFilters.length > 0;
+
+  const filtered = reqs.filter(r => {
+    const searchTerm = search.trim().toLowerCase();
+
+    const matchesSearch =
+      searchTerm.length === 0 ||
+      r.title.toLowerCase().includes(searchTerm) ||
+      r.code.toLowerCase().includes(searchTerm) ||
+      r.domain.toLowerCase().includes(searchTerm) ||
+      r.technicalRequirements.some(requirement =>
+        requirement.toLowerCase().includes(searchTerm),
+      );
+    const matchesStatus =
+      statusFilter === 'all' ||
+      (statusFilter === 'live' && r.live) ||
+      (statusFilter === 'offline' && !r.live);
+    const matchesTitle = titleFilter.length === 0 || r.title === titleFilter;
+    const matchesDomain = domainFilter.length === 0 || r.domain === domainFilter;
+    const matchesRequirements =
+      requirementFilters.length === 0 ||
+      requirementFilters.every(requirement =>
+        r.technicalRequirements.includes(requirement),
+      );
+
+    return matchesSearch && matchesStatus && matchesTitle && matchesDomain && matchesRequirements;
+  });
 
   const liveCount = reqs.filter(r => r.live).length;
 
@@ -239,10 +377,152 @@ export default function ConsoleRequisitions() {
             />
           </div>
           {/* Filters */}
-          <button className="h-10 px-4 border border-outline-variant text-on-surface-variant label-mono flex items-center gap-2 hover:bg-surface-container hover:text-on-surface transition-colors duration-150">
-            <SlidersHorizontal size={16} />
-            Filters
-          </button>
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setFiltersOpen(open => !open)}
+              className={cn(
+                'h-10 px-4 border label-mono flex items-center gap-2 transition-colors duration-150',
+                filtersOpen || hasFilters
+                  ? 'border-primary-container bg-surface-container text-on-surface'
+                  : 'border-outline-variant text-on-surface-variant hover:bg-surface-container hover:text-on-surface',
+              )}
+              aria-expanded={filtersOpen}
+            >
+              <SlidersHorizontal size={16} />
+              Filters
+              {hasFilters && (
+                <span className="bg-primary-container text-on-primary-container px-1.5 py-0.5 leading-none">
+                  {
+                    [
+                      statusFilter !== 'all',
+                      titleFilter.trim().length > 0,
+                      domainFilter.trim().length > 0,
+                      requirementFilters.length > 0,
+                    ].filter(Boolean).length
+                  }
+                </span>
+              )}
+            </button>
+
+            {filtersOpen && (
+              <div className="absolute left-0 top-12 z-40 w-[520px] max-w-[calc(100vw-2rem)] border border-outline-variant bg-surface shadow-2xl">
+                <div className="p-4 border-b border-outline-variant flex items-center justify-between gap-3">
+                  <p className="label-mono text-on-surface">Filter Requisitions</p>
+                  <button
+                    type="button"
+                    onClick={clearFilters}
+                    className="label-mono text-on-surface-variant hover:text-primary-fixed-dim transition-colors duration-150"
+                  >
+                    Clear
+                  </button>
+                </div>
+
+                <div className="p-4 space-y-4">
+                  <div>
+                    <p className="label-mono text-on-surface-variant mb-2">Status</p>
+                    <div className="grid grid-cols-3 gap-px border border-outline-variant bg-outline-variant">
+                      {(['all', 'live', 'offline'] as const).map(status => (
+                        <button
+                          key={status}
+                          type="button"
+                          onClick={() => setStatusFilter(status)}
+                          className={cn(
+                            'h-9 bg-surface label-mono transition-colors duration-150',
+                            statusFilter === status
+                              ? 'text-on-primary-container bg-primary-container'
+                              : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface',
+                          )}
+                        >
+                          {status === 'all' ? 'All' : status === 'live' ? 'Live' : 'Offline'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <label className="block">
+                      <span className="label-mono text-on-surface-variant mb-2 block">Job Title</span>
+                      <select
+                        value={titleFilter}
+                        onChange={e => setTitleFilter(e.target.value)}
+                        className="h-10 w-full border border-outline-variant bg-surface-container-lowest px-3 text-on-surface font-mono text-xs uppercase tracking-[0.12em] focus:outline-none focus:border-primary-container placeholder:text-on-surface-variant"
+                      >
+                        <option value="">All Job Titles</option>
+                        {jobTitles.map(title => (
+                          <option key={title} value={title}>
+                            {title}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="block">
+                      <span className="label-mono text-on-surface-variant mb-2 block">Domain</span>
+                      <select
+                        value={domainFilter}
+                        onChange={e => setDomainFilter(e.target.value)}
+                        className="h-10 w-full border border-outline-variant bg-surface-container-lowest px-3 text-on-surface font-mono text-xs uppercase tracking-[0.12em] focus:outline-none focus:border-primary-container placeholder:text-on-surface-variant"
+                      >
+                        <option value="">All Domains</option>
+                        {domains.map(domain => (
+                          <option key={domain} value={domain}>
+                            {domain}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+
+                  <div>
+                    <p className="label-mono text-on-surface-variant mb-2">Technical Requirements</p>
+                    <div className="relative">
+                      <button
+                        type="button"
+                        onClick={() => setRequirementsOpen(open => !open)}
+                        className={cn(
+                          'min-h-10 w-full border px-3 py-2 text-left label-mono transition-colors duration-150',
+                          requirementsOpen || requirementFilters.length > 0
+                            ? 'border-primary-container bg-surface-container text-on-surface'
+                            : 'border-outline-variant bg-surface-container-lowest text-on-surface-variant hover:text-on-surface',
+                        )}
+                        aria-expanded={requirementsOpen}
+                      >
+                        {requirementFilters.length > 0
+                          ? requirementFilters.join(', ')
+                          : 'Select Requirements'}
+                      </button>
+
+                      {requirementsOpen && (
+                        <div className="absolute left-0 top-12 z-50 max-h-64 w-full overflow-y-auto border border-outline-variant bg-surface shadow-2xl">
+                          {technicalRequirements.map(requirement => {
+                            const active = requirementFilters.includes(requirement);
+
+                            return (
+                              <label
+                                key={requirement}
+                                className="flex min-h-10 cursor-pointer items-center gap-3 border-b border-outline-variant px-3 last:border-b-0 hover:bg-surface-container"
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={active}
+                                  onChange={() => toggleRequirementFilter(requirement)}
+                                  className="size-4 accent-[var(--primary-container)]"
+                                />
+                                <span className={cn('label-mono', active ? 'text-on-surface' : 'text-on-surface-variant')}>
+                                  {requirement}
+                                </span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
         <Link
           to="/console/requisitions/new"

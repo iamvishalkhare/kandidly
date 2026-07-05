@@ -39,7 +39,7 @@ export default function ConsoleLayout({ children }: { children: React.ReactNode 
         {/* Brand */}
         <Link to="/console" className="p-5 border-b border-outline-variant block">
           <p className="font-display text-lg font-bold text-primary-fixed-dim leading-tight">KANDIDLY AI</p>
-          <p className="label-mono text-on-surface-variant mt-0.5">Voice Console</p>
+          <p className="label-mono text-on-surface-variant mt-0.5">Intelligent Interviews</p>
         </Link>
 
         {/* CTA */}

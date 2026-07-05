@@ -3,7 +3,7 @@
  * recent interviews table, and trend charts.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   CheckCircle2,
@@ -37,6 +37,16 @@ const WEEKLY_DROPPED = [8, 12, 6, 14, 10, 16, 9, 11, 7, 13, 5, 8];
 const MINI_BAR_HEIGHTS = [35, 55, 45, 70, 85, 60, 42];
 
 const PAGE_SIZE = 6;
+
+const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
+  weekday: 'short',
+  year: 'numeric',
+  month: 'short',
+  day: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+});
 
 /* -------------------------------------------------------------------------- */
 /*  SVG Charts                                                                */
@@ -179,8 +189,17 @@ function AreaChartSVG({ data, labels }: { data: number[]; labels: string[] }) {
 
 export default function ConsoleDashboard() {
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const [now, setNow] = useState(() => new Date());
 
   const weekLabels = Array.from({ length: 12 }, (_, i) => `W${i + 1}`);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setNow(new Date());
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, []);
 
   return (
     <ConsoleLayout>
@@ -189,7 +208,9 @@ export default function ConsoleDashboard() {
         <div className="flex items-center justify-between gap-4">
           <div>
             <h1 className="font-display text-headline-lg text-on-surface">System Overview</h1>
-            <p className="label-mono text-on-surface-variant mt-1">Real-time telemetry / cycle 492.1</p>
+            <p className="label-mono text-on-surface-variant mt-1">
+              Real-time telemetry / {dateTimeFormatter.format(now)}
+            </p>
           </div>
           <div className="flex items-center gap-2 border border-outline-variant px-3 py-1.5 label-mono text-on-surface shrink-0">
             <span className="size-2 bg-[var(--emerald-chip-text)] blink" />
