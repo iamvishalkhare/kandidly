@@ -1,4 +1,5 @@
 export type ScoringStatus = 'Evaluating' | 'Done';
+export type InterviewDecision = 'Shortlist' | 'Reject' | 'Hold';
 
 export interface InterviewRecord {
   id: string;
@@ -39,7 +40,7 @@ export interface InterviewReview extends InterviewRecord {
   audioSrc: string;
   finalScore: number;
   percentile: number;
-  recommendation: 'Shortlist' | 'Reject' | 'Hold';
+  recommendation: InterviewDecision;
   assessmentSummary: string;
   comparisonScores: number[];
   transcript: TranscriptTurn[];
