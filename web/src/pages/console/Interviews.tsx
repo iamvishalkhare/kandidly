@@ -7,7 +7,8 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { ArrowRight, CalendarClock, Check, ChevronDown, Filter, RotateCcw, Search, SlidersHorizontal } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import ConsoleLayout from './ConsoleLayout';
-import { MOCK_INTERVIEWS } from './interviewData';
+import { MOCK_INTERVIEW_REVIEWS } from './interviewData';
+import type { InterviewDecision } from './interviewData';
 import { MOCK_REQUISITIONS } from './requisitionData';
 
 const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
@@ -203,6 +204,20 @@ function DropdownFilter({
   );
 }
 
+const DECISION_CHIP_CLASS: Record<InterviewDecision, string> = {
+  Shortlist: 'border-[var(--emerald-chip-text)] bg-[var(--emerald-chip-bg)] text-[var(--emerald-chip-text)]',
+  Hold: 'border-[var(--amber-chip-text)] bg-[var(--amber-chip-bg)] text-[var(--amber-chip-text)]',
+  Reject: 'border-[var(--red-chip-text)] bg-[var(--red-chip-bg)] text-[var(--red-chip-text)]',
+};
+
+function DecisionPill({ decision }: { decision: InterviewDecision }) {
+  return (
+    <span className={cn('inline-flex border px-2 py-1 label-mono', DECISION_CHIP_CLASS[decision])}>
+      {decision}
+    </span>
+  );
+}
+
 export default function ConsoleInterviews() {
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -210,6 +225,7 @@ export default function ConsoleInterviews() {
   const requisitionTitleFilter = getParam(searchParams, 'requisitionTitle');
   const domainFilter = getParam(searchParams, 'domain');
   const scoringStatusFilter = getParam(searchParams, 'scoringStatus');
+  const decisionFilter = getParam(searchParams, 'decision');
   const startFilter = getParam(searchParams, 'start');
   const endFilter = getParam(searchParams, 'end');
   const searchFilter = getParam(searchParams, 'q');
@@ -241,7 +257,7 @@ export default function ConsoleInterviews() {
     setSearchParams({}, { replace: true });
   };
 
-  const filtered = MOCK_INTERVIEWS.filter(interview => {
+  const filtered = MOCK_INTERVIEW_REVIEWS.filter(interview => {
     const searchTerm = searchFilter.trim().toLowerCase();
     const concludedAt = new Date(interview.concludedAt).getTime();
     const startsAt = startFilter ? new Date(startFilter).getTime() : Number.NEGATIVE_INFINITY;
@@ -264,6 +280,8 @@ export default function ConsoleInterviews() {
       interview.domain.toLowerCase().includes(domainFilter.toLowerCase());
     const matchesScoringStatus =
       scoringStatusFilter.length === 0 || interview.scoringStatus === scoringStatusFilter;
+    const matchesDecision =
+      decisionFilter.length === 0 || interview.recommendation === decisionFilter;
     const matchesDateRange = concludedAt >= startsAt && concludedAt <= endsAt;
 
     return (
@@ -272,6 +290,7 @@ export default function ConsoleInterviews() {
       matchesRequisitionTitle &&
       matchesDomain &&
       matchesScoringStatus &&
+      matchesDecision &&
       matchesDateRange
     );
   });
@@ -332,7 +351,7 @@ export default function ConsoleInterviews() {
               </span>
             )}
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-px bg-outline-variant">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-7 gap-px bg-outline-variant">
             <div className="bg-surface p-4">
               <AutocompleteFilter
                 label="Requisition ID"
@@ -372,6 +391,19 @@ export default function ConsoleInterviews() {
                 onChange={value => setFilter('scoringStatus', value)}
               />
             </div>
+            <div className="bg-surface p-4">
+              <DropdownFilter
+                label="Decision"
+                value={decisionFilter}
+                placeholder="All Decisions"
+                options={[
+                  { value: 'Shortlist', label: 'Shortlist' },
+                  { value: 'Hold', label: 'Hold' },
+                  { value: 'Reject', label: 'Reject' },
+                ]}
+                onChange={value => setFilter('decision', value)}
+              />
+            </div>
             <label className="block bg-surface p-4">
               <span className="label-mono text-on-surface-variant mb-2 flex items-center gap-2">
                 <CalendarClock size={14} />
@@ -400,12 +432,13 @@ export default function ConsoleInterviews() {
         </section>
 
         <section className="border border-outline-variant bg-surface">
-          <div className="grid grid-cols-[1.3fr_1fr_1.5fr_1fr_1fr_1.3fr] border-b border-outline-variant bg-surface-container-lowest text-on-surface-variant label-mono">
+          <div className="grid grid-cols-[1.3fr_1fr_1.5fr_1fr_1fr_1fr_1.3fr] border-b border-outline-variant bg-surface-container-lowest text-on-surface-variant label-mono">
             <div className="px-4 py-3">Candidate</div>
             <div className="px-4 py-3 border-l border-outline-variant">Requisition ID</div>
             <div className="px-4 py-3 border-l border-outline-variant">Job Title</div>
             <div className="px-4 py-3 border-l border-outline-variant">Domain</div>
             <div className="px-4 py-3 border-l border-outline-variant">Scoring</div>
+            <div className="px-4 py-3 border-l border-outline-variant">Decision</div>
             <div className="px-4 py-3 border-l border-outline-variant">Interview Taken On</div>
           </div>
 
@@ -414,7 +447,7 @@ export default function ConsoleInterviews() {
               <Link
                 key={interview.id}
                 to={`/console/interviews/${interview.id}`}
-                className="grid grid-cols-1 xl:grid-cols-[1.3fr_1fr_1.5fr_1fr_1fr_1.3fr] bg-surface hover:bg-surface-container transition-colors duration-150"
+                className="grid grid-cols-1 xl:grid-cols-[1.3fr_1fr_1.5fr_1fr_1fr_1fr_1.3fr] bg-surface hover:bg-surface-container transition-colors duration-150"
               >
                 <div className="px-4 py-4">
                   <p className="font-medium text-on-surface">{interview.candidateName}</p>
@@ -440,6 +473,9 @@ export default function ConsoleInterviews() {
                   >
                     {interview.scoringStatus}
                   </span>
+                </div>
+                <div className="px-4 py-4 xl:border-l xl:border-outline-variant">
+                  <DecisionPill decision={interview.recommendation} />
                 </div>
                 <div className="px-4 py-4 xl:border-l xl:border-outline-variant label-mono text-on-surface-variant tabular flex items-center justify-between gap-3">
                   <span>{dateTimeFormatter.format(new Date(interview.concludedAt))}</span>
