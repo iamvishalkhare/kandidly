@@ -2,7 +2,7 @@
  * /console/interviews/:interviewId - review completed interview evidence.
  */
 
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { MutableRefObject } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
@@ -20,6 +20,8 @@ import {
   UserCheck,
   XCircle,
 } from 'lucide-react';
+import { useWavesurfer } from '@wavesurfer/react';
+import Hover from 'wavesurfer.js/plugins/hover';
 import { cn } from '../../lib/utils';
 import ConsoleLayout from './ConsoleLayout';
 import { getInterviewReview } from './interviewData';
@@ -132,26 +134,57 @@ function WaveformRecording({
   onSeek: (seconds: number) => void;
 }) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const waveformRef = useRef<HTMLDivElement | null>(null);
   const [playing, setPlaying] = useState(false);
   const durationSeconds = Math.max(1, interview.transcript.at(-1)?.seconds ?? 1);
-  const progress = Math.min(100, Math.max(0, (currentSeconds / durationSeconds) * 100));
-  const waveform = useMemo(
-    () => Array.from({ length: 64 }, (_, i) => 24 + ((i * 17 + i * i * 3) % 58)),
+
+  // Placeholder amplitude data until real recordings are wired up — swap for exportPeaks() from the actual audio.
+  const peaks = useMemo(
+    () => [Array.from({ length: 200 }, (_, i) => (24 + ((i * 17 + i * i * 3) % 58)) / 100)],
     [],
   );
+  const plugins = useMemo(
+    () => [
+      Hover.create({
+        lineColor: '#b8c3ff',
+        lineWidth: 1,
+        labelBackground: '#0c0e17',
+        labelColor: '#c4c5d9',
+        labelSize: 11,
+      }),
+    ],
+    [],
+  );
+
+  const { wavesurfer } = useWavesurfer({
+    container: waveformRef,
+    height: 'auto',
+    barWidth: 3,
+    barGap: 2,
+    cursorWidth: 1,
+    waveColor: '#33343e',
+    progressColor: '#2e5bff',
+    cursorColor: '#b8c3ff',
+    normalize: true,
+    peaks,
+    duration: durationSeconds,
+    plugins,
+  });
+
+  // The waveform is driven by peaks/duration only (no real media), so it stays a controlled
+  // component: external seeks move the cursor, and user drags/clicks report back via onSeek.
+  useEffect(() => {
+    wavesurfer?.setTime(currentSeconds);
+  }, [wavesurfer, currentSeconds]);
+
+  useEffect(() => {
+    return wavesurfer?.on('interaction', newTime => onSeek(newTime));
+  }, [wavesurfer, onSeek]);
 
   const seekAudio = (seconds: number) => {
     if (audioRef.current && Number.isFinite(audioRef.current.duration) && audioRef.current.duration > seconds) {
       audioRef.current.currentTime = seconds;
     }
-  };
-
-  const handleSeek = (clientX: number, target: HTMLButtonElement) => {
-    const rect = target.getBoundingClientRect();
-    const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
-    const nextSeconds = ratio * durationSeconds;
-    seekAudio(nextSeconds);
-    onSeek(nextSeconds);
   };
 
   const togglePlayback = async () => {
@@ -187,26 +220,15 @@ function WaveformRecording({
         </button>
       </div>
 
-      <button
-        type="button"
-        onClick={e => handleSeek(e.clientX, e.currentTarget)}
-        className="relative mt-3 h-24 w-full border border-outline-variant bg-surface flex items-center px-2 overflow-hidden focus:outline-none focus:border-primary-container"
+      <div
+        ref={waveformRef}
+        role="slider"
         aria-label="Seek interview recording"
-      >
-        <div className="absolute inset-y-0 left-0 bg-primary-container/10" style={{ width: `${progress}%` }} />
-        <div className="absolute top-2 bottom-2 w-px bg-primary-fixed-dim z-10" style={{ left: `${progress}%` }} />
-        {waveform.map((height, i) => (
-          <span key={i} className="relative z-0 flex-1 h-full flex items-center justify-center">
-            <span
-              className={cn(
-                'w-1 transition-colors duration-150',
-                (i / waveform.length) * 100 <= progress ? 'bg-primary-container' : 'bg-surface-container-highest',
-              )}
-              style={{ height: `${height}%` }}
-            />
-          </span>
-        ))}
-      </button>
+        aria-valuemin={0}
+        aria-valuemax={durationSeconds}
+        aria-valuenow={currentSeconds}
+        className="mt-3 h-24 w-full border border-outline-variant bg-surface px-2 overflow-hidden"
+      />
 
       <div className="mt-2 flex justify-between label-mono text-on-surface-variant">
         <span>0:00</span>
