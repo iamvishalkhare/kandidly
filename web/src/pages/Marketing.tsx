@@ -139,13 +139,14 @@ function Hero() {
             <span className="size-2 bg-primary-container blink" />REC 00:42:17
           </span>
         </div>
-        <div className="h-24 border-b border-outline-variant px-4 flex items-end gap-[3px] py-3">
+        <div className="h-24 border-b border-outline-variant px-4 flex items-end py-3">
           {WAVEFORM.map((h, i) => (
-            <div
-              key={i}
-              className={cn('flex-1', i >= WAVEFORM.length - 8 ? 'bg-primary-container' : 'bg-outline-variant')}
-              style={{ height: `${h}%` }}
-            />
+            <div key={i} className="flex-1 h-full flex items-end justify-center">
+              <div
+                className={cn('w-1', i >= WAVEFORM.length - 8 ? 'bg-primary-container' : 'bg-outline-variant')}
+                style={{ height: `${h}%` }}
+              />
+            </div>
           ))}
         </div>
         <div className="flex-1 p-5 font-mono text-label-sm leading-relaxed space-y-4 overflow-hidden">

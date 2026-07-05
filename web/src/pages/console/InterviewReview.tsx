@@ -190,20 +190,21 @@ function WaveformRecording({
       <button
         type="button"
         onClick={e => handleSeek(e.clientX, e.currentTarget)}
-        className="relative mt-3 h-24 w-full border border-outline-variant bg-surface flex items-center gap-px px-2 overflow-hidden focus:outline-none focus:border-primary-container"
+        className="relative mt-3 h-24 w-full border border-outline-variant bg-surface flex items-center px-2 overflow-hidden focus:outline-none focus:border-primary-container"
         aria-label="Seek interview recording"
       >
         <div className="absolute inset-y-0 left-0 bg-primary-container/10" style={{ width: `${progress}%` }} />
         <div className="absolute top-2 bottom-2 w-px bg-primary-fixed-dim z-10" style={{ left: `${progress}%` }} />
         {waveform.map((height, i) => (
-          <span
-            key={i}
-            className={cn(
-              'relative z-0 flex-1 transition-colors duration-150',
-              (i / waveform.length) * 100 <= progress ? 'bg-primary-container' : 'bg-surface-container-highest',
-            )}
-            style={{ height: `${height}%` }}
-          />
+          <span key={i} className="relative z-0 flex-1 h-full flex items-center justify-center">
+            <span
+              className={cn(
+                'w-1 transition-colors duration-150',
+                (i / waveform.length) * 100 <= progress ? 'bg-primary-container' : 'bg-surface-container-highest',
+              )}
+              style={{ height: `${height}%` }}
+            />
+          </span>
         ))}
       </button>
 
