@@ -544,22 +544,22 @@ function BuilderForm({
   const isEditing = !!existing;
   const currentStatus = existing?.status ?? 'draft';
   const interviewUrl = existing?.invite_token ? getInterviewUrl(existing.invite_token) : null;
-   const [copiedInterviewUrl, setCopiedInterviewUrl] = useState(false);
+  const [copiedInterviewUrl, setCopiedInterviewUrl] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [showSuccessSplash, setShowSuccessSplash] = useState(false);
+  const [deployState, setDeployState] = useState<'idle' | 'processing' | 'success'>('idle');
 
   const handleCloseSplash = useCallback(() => {
-    setShowSuccessSplash(false);
+    setDeployState('idle');
     navigate('/console/requisitions');
   }, [navigate]);
 
   useEffect(() => {
-    if (!showSuccessSplash) return;
+    if (deployState !== 'success') return;
     const timer = setTimeout(() => {
       handleCloseSplash();
     }, 6000);
     return () => clearTimeout(timer);
-  }, [showSuccessSplash, handleCloseSplash]);
+  }, [deployState, handleCloseSplash]);
 
   const [jobTitle, setJobTitle]   = useState(existing?.title ?? '');
   const [domain, setDomain]       = useState(existing?.domain ?? '');
@@ -728,7 +728,7 @@ function BuilderForm({
       }
       await queryClient.invalidateQueries({ queryKey: ['console'] });
       if (deploy) {
-        setShowSuccessSplash(true);
+        setDeployState('success');
       } else {
         toast(
           errors.length > 0
@@ -743,6 +743,9 @@ function BuilderForm({
         (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
         'Saving the requisition failed. Please try again.';
       toast(message, 'error');
+      if (deploy) {
+        setDeployState('idle');
+      }
     } finally {
       setSaving(false);
     }
@@ -755,6 +758,7 @@ function BuilderForm({
       return;
     }
     if (saving) return;
+    setDeployState('processing');
     void submit(true);
   };
 
@@ -1495,7 +1499,7 @@ function BuilderForm({
         </div>
       </div>
 
-      {showSuccessSplash && (
+      {deployState !== 'idle' && (
         <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-[#0c0e17]/95 backdrop-blur-md animate-fade-in select-none">
           <style dangerouslySetInnerHTML={{ __html: `
             @keyframes fadeIn {
@@ -1528,61 +1532,92 @@ function BuilderForm({
             }
           `}} />
 
-          {/* Top-right close button */}
-          <button
-            onClick={handleCloseSplash}
-            className="absolute top-6 right-6 text-on-surface-variant hover:text-on-surface hover:rotate-90 transition-all duration-300 p-2 border border-outline-variant hover:border-primary-container bg-surface-container/30 rounded-full"
-            title="Close and continue"
-          >
-            <X size={20} />
-          </button>
+          {/* Top-right close button (Only available on success) */}
+          {deployState === 'success' && (
+            <button
+              onClick={handleCloseSplash}
+              className="absolute top-6 right-6 text-on-surface-variant hover:text-on-surface hover:rotate-90 transition-all duration-300 p-2 border border-outline-variant hover:border-primary-container bg-surface-container/30 rounded-full animate-fade-in"
+              title="Close and continue"
+            >
+              <X size={20} />
+            </button>
+          )}
 
           {/* Background Glow */}
           <div className="absolute w-[450px] h-[450px] rounded-full bg-primary-container/20 blur-[120px] pointer-events-none" />
 
-          {/* Success Content Box */}
-          <div className="relative text-center max-w-xl px-6 flex flex-col items-center animate-scale-up">
-            {/* Live Indicator Chip */}
-            <div className="mb-6 px-3 py-1 label-mono text-xs flex items-center gap-2 select-none border border-[var(--emerald-chip-text)]/20 bg-[var(--emerald-chip-bg)] text-[var(--emerald-chip-text)] rounded-full">
-              <span className="size-2 bg-[var(--emerald-chip-text)] blink rounded-full" />
-              DEPLOYMENT LIVE
-            </div>
-
-            {/* Glowing Success Ring and Checkmark */}
-            <div className="relative mb-8 w-24 h-24 flex items-center justify-center">
-              {/* Outer pulsing ring */}
-              <div className="absolute inset-0 rounded-full border-4 border-primary-container/30 animate-ping duration-1000" />
-              {/* Middle glowing border */}
-              <div className="absolute inset-2 rounded-full border border-primary-container/60 shadow-[0_0_20px_rgba(46,91,255,0.4)]" />
-              {/* Inner circle with Check */}
-              <div className="absolute inset-3 rounded-full bg-primary-container flex items-center justify-center animate-bounce-short">
-                <Check size={36} className="text-on-primary stroke-[3px]" />
+          {/* Processing State */}
+          {deployState === 'processing' && (
+            <div className="relative text-center max-w-xl px-6 flex flex-col items-center animate-scale-up">
+              {/* Spinner Container */}
+              <div className="relative mb-8 w-20 h-20 flex items-center justify-center">
+                {/* Rotating ring */}
+                <div className="absolute inset-0 rounded-full border-4 border-outline-variant/30" />
+                <div className="absolute inset-0 rounded-full border-4 border-primary-container border-t-transparent animate-spin" />
               </div>
+
+              {/* Title */}
+              <h1 className="font-display text-4xl font-bold tracking-tight mb-4 text-on-surface">
+                Deploying Interview
+              </h1>
+
+              {/* Subtitle */}
+              <p className="text-on-surface-variant text-body-md mb-8 max-w-sm">
+                Configuring screening routes and deploying the interactive assessment workspace...
+              </p>
+
+              {/* API Route Status */}
+              <p className="text-[11px] text-primary-fixed-dim/40 font-mono tracking-wider uppercase">
+                {isEditing ? 'PUT' : 'POST'} /api/admin/console/requisitions{isEditing && existing ? `/${existing.id}` : ''}
+              </p>
             </div>
+          )}
 
-            {/* Title with Gradient */}
-            <h1 className="font-display text-4xl font-bold tracking-tight mb-4 text-on-surface">
-              Interview Deployed
-            </h1>
+          {/* Success State */}
+          {deployState === 'success' && (
+            <div className="relative text-center max-w-xl px-6 flex flex-col items-center animate-scale-up">
+              {/* Live Indicator Chip */}
+              <div className="mb-6 px-3 py-1 label-mono text-xs flex items-center gap-2 select-none border border-[var(--emerald-chip-text)]/20 bg-[var(--emerald-chip-bg)] text-[var(--emerald-chip-text)] rounded-full">
+                <span className="size-2 bg-[var(--emerald-chip-text)] blink rounded-full" />
+                DEPLOYMENT LIVE
+              </div>
 
-            {/* Requisition Name */}
-            <p className="text-xl font-medium text-primary-fixed-dim mb-4 max-w-md break-words font-sans">
-              {jobTitle}
-            </p>
+              {/* Glowing Success Ring and Checkmark */}
+              <div className="relative mb-8 w-24 h-24 flex items-center justify-center">
+                {/* Outer pulsing ring */}
+                <div className="absolute inset-0 rounded-full border-4 border-primary-container/30 animate-ping duration-1000" />
+                {/* Middle glowing border */}
+                <div className="absolute inset-2 rounded-full border border-primary-container/60 shadow-[0_0_20px_rgba(46,91,255,0.4)]" />
+                {/* Inner circle with Check */}
+                <div className="absolute inset-3 rounded-full bg-primary-container flex items-center justify-center animate-bounce-short">
+                  <Check size={36} className="text-on-primary stroke-[3px]" />
+                </div>
+              </div>
 
-            {/* Explanation */}
-            <p className="text-on-surface-variant text-body-md mb-8 max-w-sm">
-              The requisition is live. Candidates can now access the interview link and begin their assessments.
-            </p>
+              {/* Title with Gradient */}
+              <h1 className="font-display text-4xl font-bold tracking-tight mb-4 text-on-surface">
+                Interview Deployed
+              </h1>
 
-            {/* Auto-closing Progress Bar */}
-            <div className="w-64 h-1 bg-surface-container-highest overflow-hidden relative border border-outline-variant/30">
-              <div className="absolute top-0 bottom-0 left-0 bg-primary-container animate-countdown-progress" />
+              {/* Requisition Name */}
+              <p className="text-xl font-medium text-primary-fixed-dim mb-4 max-w-md break-words font-sans">
+                {jobTitle}
+              </p>
+
+              {/* Explanation */}
+              <p className="text-on-surface-variant text-body-md mb-8 max-w-sm">
+                The requisition is live. Candidates can now access the interview link and begin their assessments.
+              </p>
+
+              {/* Auto-closing Progress Bar */}
+              <div className="w-64 h-1 bg-surface-container-highest overflow-hidden relative border border-outline-variant/30">
+                <div className="absolute top-0 bottom-0 left-0 bg-primary-container animate-countdown-progress" />
+              </div>
+              <p className="text-xs text-on-surface-variant/60 mt-2 font-mono">
+                Redirecting in a few seconds...
+              </p>
             </div>
-            <p className="text-xs text-on-surface-variant/60 mt-2 font-mono">
-              Redirecting in a few seconds...
-            </p>
-          </div>
+          )}
         </div>
       )}
     </ConsoleLayout>
