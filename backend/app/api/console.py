@@ -7,12 +7,12 @@ Builder payload ↔ template/rubric mapping is pure logic in app.domain.builder.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy import func, select
 from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -48,7 +48,7 @@ from app.domain.builder import (
 from app.domain.forms import validate_template
 from app.domain.links import generate_token
 from app.domain.rubrics import validate_criteria
-from app.schemas.interview_config import InterviewConfig
+from app.schemas.interview_config import InterviewConfig, ProctoringConfig
 
 router = APIRouter(prefix="/api/admin/console", tags=["console"])
 _admin = Depends(require_role("admin", "recruiter"))
@@ -93,7 +93,23 @@ class ConsoleRequisitionIn(BaseModel):
     sample_questions: list[BuilderQuestion] = []
     screening_fields: list[BuilderField] = []
     rubric: list[BuilderCriterion] = []
+    # ISO date (YYYY-MM-DD); the interview link goes offline at the end of
+    # this day. Stored in interview_config.ends_at, mirrored to closes_at.
+    end_date: str | None = None
+    # Webcam snapshots every 10s during the interview (proctoring pipeline).
+    proctoring_enabled: bool = True
     deploy: bool = True  # False → "Save as Offline" (draft)
+
+    @field_validator("end_date")
+    @classmethod
+    def _end_date_iso(cls, v: str | None) -> str | None:
+        if v is None or not v.strip():
+            return None
+        try:
+            date.fromisoformat(v.strip())
+        except ValueError as exc:
+            raise ValueError("end_date must be an ISO date (YYYY-MM-DD)") from exc
+        return v.strip()
 
 
 class ConsoleRequisitionOut(BaseModel):
@@ -115,6 +131,8 @@ class ConsoleRequisitionOut(BaseModel):
 class ConsoleRequisitionDetailOut(ConsoleRequisitionOut):
     objective: str | None = None
     tone: str = "conversational"
+    end_date: str | None = None
+    proctoring_enabled: bool = True
     sample_questions: list[BuilderQuestion] = []
     screening_fields: list[BuilderField] = []
     rubric: list[BuilderCriterion] = []
@@ -265,6 +283,21 @@ def _req_card(r: Requisition, clicks: dict, completed: dict, tokens: dict) -> Co
     )
 
 
+def _closes_at_from(end_date: str | None) -> datetime | None:
+    """The link stays usable through the chosen end date (offline at the end
+    of that day, UTC)."""
+    if not end_date:
+        return None
+    return datetime.fromisoformat(end_date).replace(
+        hour=23, minute=59, second=59, tzinfo=UTC
+    )
+
+
+def _proctoring_config(enabled: bool) -> ProctoringConfig:
+    # Console proctoring captures a webcam frame every 10 seconds.
+    return ProctoringConfig(enabled=enabled, snapshot_min_s=10, snapshot_max_s=10)
+
+
 async def _upsert_catalog(db: AsyncSession, org_id, user: AuthUser, body: ConsoleRequisitionIn):
     from app.api.admin import _upsert_catalog as upsert
 
@@ -384,6 +417,8 @@ async def _detail_out(db: AsyncSession, r: Requisition) -> ConsoleRequisitionDet
         **card.model_dump(),
         objective=r.role_objective,
         tone=cfg.tone,
+        end_date=(cfg.ends_at or "")[:10] or None,
+        proctoring_enabled=cfg.proctoring.enabled,
         sample_questions=[BuilderQuestion(**q) for q in (r.sample_questions or [])],
         screening_fields=[
             BuilderField(**f)
@@ -432,9 +467,14 @@ async def deploy_requisition(
         form_template_id=template.id,
         rubric_id=rubric.id,
         status="open" if body.deploy else "draft",
-        interview_config=InterviewConfig(tone=body.tone).model_dump(),
+        interview_config=InterviewConfig(
+            tone=body.tone,
+            ends_at=body.end_date,
+            proctoring=_proctoring_config(body.proctoring_enabled),
+        ).model_dump(),
         created_by=user.user_id,
         opens_at=datetime.now(UTC) if body.deploy else None,
+        closes_at=_closes_at_from(body.end_date),
     )
     db.add(req)
     await db.flush()
@@ -517,7 +557,14 @@ async def update_requisition(
     req.role_objective = body.objective or None
     req.sample_questions = [q.model_dump() for q in body.sample_questions]
     cfg = InterviewConfig(**(req.interview_config or {}))
-    req.interview_config = cfg.model_copy(update={"tone": body.tone}).model_dump()
+    req.interview_config = cfg.model_copy(
+        update={
+            "tone": body.tone,
+            "ends_at": body.end_date,
+            "proctoring": _proctoring_config(body.proctoring_enabled),
+        }
+    ).model_dump()
+    req.closes_at = _closes_at_from(body.end_date)
     if body.deploy and req.status in ("draft", "paused"):
         req.status = "open"
         req.opens_at = req.opens_at or datetime.now(UTC)

@@ -58,6 +58,8 @@ export interface ConsoleRequisitionWire {
 export interface ConsoleRequisitionDetailWire extends ConsoleRequisitionWire {
   objective: string | null;
   tone: string;
+  end_date: string | null;
+  proctoring_enabled: boolean;
   sample_questions: BuilderQuestionWire[];
   screening_fields: BuilderFieldWire[];
   rubric: BuilderCriterionWire[];
@@ -69,6 +71,8 @@ export interface ConsoleRequisitionIn {
   objective: string;
   skills: string[];
   tone: string;
+  end_date: string | null;
+  proctoring_enabled: boolean;
   sample_questions: BuilderQuestionWire[];
   screening_fields: BuilderFieldWire[];
   rubric: BuilderCriterionWire[];

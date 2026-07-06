@@ -551,6 +551,8 @@ function BuilderForm({
   const [objective, setObjective] = useState(existing?.objective ?? '');
   const [skills, setSkills]       = useState<string[]>(existing?.technical_requirements ?? []);
   const [tone, setTone]           = useState<Tone>((existing?.tone as Tone) ?? 'technical');
+  const [endDate, setEndDate]     = useState(existing?.end_date ?? '');
+  const [proctoringEnabled, setProctoringEnabled] = useState(existing?.proctoring_enabled ?? true);
   const [touched, setTouched]     = useState<Record<string, boolean>>({});
   const [attempted, setAttempted] = useState(false);
 
@@ -678,6 +680,8 @@ function BuilderForm({
     objective: objective.trim(),
     skills,
     tone,
+    end_date: endDate || null,
+    proctoring_enabled: proctoringEnabled,
     sample_questions: sampleQuestions
       .filter(q => q.text.trim())
       .map(q => ({ id: q.id, text: q.text.trim() })),
@@ -841,6 +845,19 @@ function BuilderForm({
                   <span className="label-mono text-error normal-case tracking-normal">Domain is required.</span>
                 )}
               </div>
+              <div className="flex flex-col gap-2">
+                <FieldLabel>End Date (Optional)</FieldLabel>
+                <input
+                  type="date"
+                  value={endDate}
+                  onChange={e => setEndDate(e.target.value)}
+                  className={inputClasses(false)}
+                />
+                <span className="text-body-md text-on-surface-variant">
+                  The interview link automatically goes offline at the end of this day.
+                  Leave empty to keep it open until you pause or close the requisition.
+                </span>
+              </div>
             </div>
           </div>
 
@@ -976,10 +993,54 @@ function BuilderForm({
             </div>
           </div>
 
-          {/* 05. Screening Form Builder */}
+          {/* 05. Proctoring & Integrity */}
           <div className="p-5 border-b border-outline-variant">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="font-display text-headline-md text-on-surface">05. Screening Form Builder</h2>
+              <h2 className="font-display text-headline-md text-on-surface">05. Proctoring &amp; Integrity</h2>
+            </div>
+            <button
+              type="button"
+              onClick={() => setProctoringEnabled(enabled => !enabled)}
+              className={cn(
+                'w-full flex items-start gap-3 p-4 border transition-colors duration-150 text-left',
+                proctoringEnabled
+                  ? 'border-primary-container bg-primary-container/10'
+                  : 'border-outline-variant bg-surface hover:bg-surface-container',
+              )}
+              aria-pressed={proctoringEnabled}
+            >
+              <span
+                className={cn(
+                  'size-5 border shrink-0 flex items-center justify-center mt-0.5',
+                  proctoringEnabled
+                    ? 'bg-primary-container border-primary-container'
+                    : 'border-outline-variant',
+                )}
+              >
+                {proctoringEnabled && <Check size={14} className="text-on-primary" />}
+              </span>
+              <span className="flex flex-col gap-1.5">
+                <span className={cn('label-mono uppercase', proctoringEnabled ? 'text-primary-fixed-dim' : 'text-on-surface')}>
+                  Enable Webcam Proctoring
+                </span>
+                <span className="text-body-md text-on-surface-variant normal-case">
+                  Kandidly captures a webcam snapshot every 10 seconds while the interview is live.
+                  Frames are analyzed for integrity signals — confirming the same candidate stays on
+                  camera and flagging attention shifts, additional people, or an empty seat — and
+                  appear on the interview review page alongside the transcript and score evidence.
+                </span>
+                <span className="text-body-md text-on-surface-variant normal-case">
+                  Candidates are told about monitoring up front and must grant Kandidly camera
+                  permission during the pre-interview check before the interview can begin.
+                </span>
+              </span>
+            </button>
+          </div>
+
+          {/* 06. Screening Form Builder */}
+          <div className="p-5 border-b border-outline-variant">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="font-display text-headline-md text-on-surface">06. Screening Form Builder</h2>
             </div>
             <div className="grid grid-cols-1 xl:grid-cols-[260px_minmax(0,1fr)] gap-5">
               {/* Toolbox */}
@@ -1186,10 +1247,10 @@ function BuilderForm({
             </div>
           </div>
 
-          {/* 06. Assessment Rubrics */}
+          {/* 07. Assessment Rubrics */}
           <div className="p-5 border-b border-outline-variant">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="font-display text-headline-md text-on-surface">06. Assessment Rubrics</h2>
+              <h2 className="font-display text-headline-md text-on-surface">07. Assessment Rubrics</h2>
             </div>
             <div className="flex flex-col border border-outline-variant bg-surface-container-lowest">
               {/* Table header */}
