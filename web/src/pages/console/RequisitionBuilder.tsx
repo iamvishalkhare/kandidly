@@ -31,12 +31,15 @@ import {
 import { cn } from '../../lib/utils';
 import { useToast } from '../../components/ui';
 import ConsoleLayout from './ConsoleLayout';
+import { copyToClipboard, getInterviewUrl } from './requisitionData';
 import {
-  MOCK_REQUISITIONS,
-  copyToClipboard,
-  getInterviewUrl,
-  type Requisition,
-} from './requisitionData';
+  consoleApi,
+  useCatalog,
+  useConsoleRequisition,
+  type ConsoleRequisitionDetailWire,
+  type ConsoleRequisitionIn,
+} from '../../lib/consoleApi';
+import { useQueryClient } from '@tanstack/react-query';
 
 /* -------------------------------------------------------------------------- */
 /*  Types & constants                                                         */
@@ -128,27 +131,6 @@ const FIELD_DEFAULTS: Record<FieldType, { label: string; placeholder: string }> 
 const CHOICE_TYPES: FieldType[] = ['multiple_choice', 'multi_select'];
 const PLACEHOLDER_TYPES: FieldType[] = ['text', 'textarea', 'file', 'social'];
 
-// Mock lookup lists standing in for DB-backed autocomplete (to be replaced by
-// API calls). Values a user "creates" are appended for the session.
-const DB_JOB_TITLES = [
-  'Senior AI Engineer', 'Product Designer', 'Growth Manager', 'Frontend Engineer',
-  'Data Scientist', 'DevOps Lead', 'Backend Engineer', 'Product Manager',
-  'Machine Learning Engineer', 'Engineering Manager', 'QA Engineer', 'Technical Writer',
-];
-
-const DB_DOMAINS = [
-  'Machine Learning', 'Product', 'Marketing', 'Engineering', 'Data Science',
-  'Infrastructure', 'Design', 'Sales', 'Customer Success', 'Finance', 'People & Talent',
-];
-
-const DB_SKILLS = [
-  'React', 'TypeScript', 'GraphQL', 'Node.js', 'Python', 'PyTorch', 'RAG',
-  'Vector DBs', 'SQL', 'PostgreSQL', 'Kubernetes', 'Terraform', 'AWS', 'CI/CD',
-  'Figma', 'Design Systems', 'Prototyping', 'GA4', 'Lifecycle Automation',
-  'API Design', 'Forecasting', 'ML Ops', 'Analytics', 'Agile Delivery',
-  'Accessibility', 'Go', 'Rust', 'Java',
-];
-
 let idCounter = 0;
 const nextId = () => `el-${++idCounter}`;
 
@@ -160,41 +142,6 @@ const makeField = (type: FieldType): ScreeningField => ({
   required: false,
   options: CHOICE_TYPES.includes(type) ? ['Option 1', 'Option 2', 'Option 3'] : [],
 });
-
-const getRequisitionObjective = (req: Requisition) =>
-  `Hire a strong ${req.title} for the ${req.domain} function. The interview should validate hands-on depth in ${req.technicalRequirements.join(', ')}, practical problem solving, communication clarity, and readiness to contribute in production settings.`;
-
-const getRequisitionQuestions = (req: Requisition): SampleQuestion[] => [
-  {
-    id: nextId(),
-    text: `Walk me through a recent project where you used ${req.technicalRequirements.slice(0, 2).join(' and ')} in a production context.`,
-  },
-  {
-    id: nextId(),
-    text: `What trade-offs would you consider when solving a high-impact ${req.domain.toLowerCase()} problem for this role?`,
-  },
-];
-
-const getRequisitionFields = (): ScreeningField[] => [
-  {
-    ...makeField('file'),
-    label: 'Resume',
-    placeholder: 'PDF or DOCX, up to 10 MB',
-    required: true,
-  },
-  {
-    ...makeField('textarea'),
-    label: 'Why are you interested in this role?',
-    placeholder: 'Share the experience and motivation that make this role a fit.',
-    required: true,
-  },
-  {
-    ...makeField('multi_select'),
-    label: 'Which required skills have you used professionally?',
-    options: ['Java', 'Python', 'Kafka', 'React', 'SQL', 'AWS'],
-    required: true,
-  },
-];
 
 /* -------------------------------------------------------------------------- */
 /*  Shared field shell                                                        */
@@ -553,42 +500,98 @@ function FieldPreview({ field }: { field: ScreeningField }) {
 type DragPayload = { kind: 'new'; type: FieldType } | { kind: 'move'; id: string };
 
 export default function RequisitionBuilder() {
-  const navigate = useNavigate();
   const { requisitionId } = useParams<{ requisitionId: string }>();
-  const { toast } = useToast();
-  const existingRequisition = MOCK_REQUISITIONS.find(req => req.id === requisitionId);
-  const isEditing = !!existingRequisition;
-  const interviewUrl = existingRequisition ? getInterviewUrl(existingRequisition.interviewToken) : null;
-  const [copiedInterviewUrl, setCopiedInterviewUrl] = useState(false);
+  const detail = useConsoleRequisition(requisitionId);
+  const catalog = useCatalog();
 
-  const [jobTitle, setJobTitle]   = useState(existingRequisition?.title ?? '');
-  const [domain, setDomain]       = useState(existingRequisition?.domain ?? '');
-  const [objective, setObjective] = useState(existingRequisition ? getRequisitionObjective(existingRequisition) : '');
-  const [skills, setSkills]       = useState<string[]>(existingRequisition?.technicalRequirements ?? []);
-  const [tone, setTone]           = useState<Tone>('technical');
+  if ((requisitionId && !detail.data) || !catalog.data) {
+    return (
+      <ConsoleLayout>
+        <div className="p-8">
+          <p className="label-mono text-on-surface-variant">
+            {detail.isError ? 'Requisition not found.' : 'Loading requisition builder…'}
+          </p>
+        </div>
+      </ConsoleLayout>
+    );
+  }
+
+  return (
+    <BuilderForm
+      key={requisitionId ?? 'new'}
+      existing={detail.data ?? null}
+      dbJobTitles={catalog.data.job_titles}
+      dbDomains={catalog.data.domains}
+      dbSkills={catalog.data.skills}
+    />
+  );
+}
+
+function BuilderForm({
+  existing,
+  dbJobTitles,
+  dbDomains,
+  dbSkills,
+}: {
+  existing: ConsoleRequisitionDetailWire | null;
+  dbJobTitles: string[];
+  dbDomains: string[];
+  dbSkills: string[];
+}) {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const isEditing = !!existing;
+  const interviewUrl = existing?.invite_token ? getInterviewUrl(existing.invite_token) : null;
+  const [copiedInterviewUrl, setCopiedInterviewUrl] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const [jobTitle, setJobTitle]   = useState(existing?.title ?? '');
+  const [domain, setDomain]       = useState(existing?.domain ?? '');
+  const [objective, setObjective] = useState(existing?.objective ?? '');
+  const [skills, setSkills]       = useState<string[]>(existing?.technical_requirements ?? []);
+  const [tone, setTone]           = useState<Tone>((existing?.tone as Tone) ?? 'technical');
   const [touched, setTouched]     = useState<Record<string, boolean>>({});
   const [attempted, setAttempted] = useState(false);
 
-  // Session-local stand-ins for DB lookups; "created" values persist here.
-  const [jobTitleDb, setJobTitleDb] = useState<string[]>(DB_JOB_TITLES);
-  const [domainDb, setDomainDb]     = useState<string[]>(DB_DOMAINS);
-  const [skillDb, setSkillDb]       = useState<string[]>(DB_SKILLS);
+  // Catalog-backed autocomplete lists; values a user "creates" are appended
+  // for the session and persisted server-side on deploy/save.
+  const [jobTitleDb, setJobTitleDb] = useState<string[]>(dbJobTitles);
+  const [domainDb, setDomainDb]     = useState<string[]>(dbDomains);
+  const [skillDb, setSkillDb]       = useState<string[]>(dbSkills);
 
   const [sampleQuestions, setSampleQuestions] = useState<SampleQuestion[]>(
-    existingRequisition ? getRequisitionQuestions(existingRequisition) : [],
+    (existing?.sample_questions ?? []).map(q => ({ id: nextId(), text: q.text })),
   );
 
   const [fields, setFields] = useState<ScreeningField[]>(
-    existingRequisition ? getRequisitionFields() : [],
+    (existing?.screening_fields ?? []).map(f => ({
+      id: nextId(),
+      type: f.type,
+      label: f.label,
+      placeholder: f.placeholder,
+      required: f.required,
+      options: f.options,
+    })),
   );
   const [expandedFieldId, setExpandedFieldId] = useState<string | null>(null);
   const [dragging, setDragging] = useState<DragPayload | null>(null);
   const [dropIndex, setDropIndex] = useState<number | null>(null);
 
-  const [criteria, setCriteria] = useState<RubricCriterion[]>([
-    { id: nextId(), name: 'Technical Skill', description: '', weight: 60 },
-    { id: nextId(), name: 'Communication',   description: '', weight: 40 },
-  ]);
+  const [criteria, setCriteria] = useState<RubricCriterion[]>(
+    existing?.rubric.length
+      ? existing.rubric.map(c => ({
+          id: nextId(),
+          name: c.name,
+          description: c.description,
+          weight: c.weight,
+        }))
+      : [
+          { id: nextId(), name: 'Technical Skill',  description: '', weight: 50 },
+          { id: nextId(), name: 'Communication',    description: '', weight: 30 },
+          { id: nextId(), name: 'Problem Solving',  description: '', weight: 20 },
+        ],
+  );
 
   const totalWeight = useMemo(() => criteria.reduce((sum, c) => sum + (c.weight || 0), 0), [criteria]);
 
@@ -597,9 +600,10 @@ export default function RequisitionBuilder() {
     if (!jobTitle.trim())    list.push('Job title is required.');
     if (!domain.trim())      list.push('Domain is required.');
     if (skills.length === 0) list.push('Add at least one must-have skill.');
+    if (criteria.length < 3) list.push('Add at least 3 rubric criteria.');
     if (totalWeight !== 100) list.push('Rubric weightage must total 100%.');
     return list;
-  }, [jobTitle, domain, skills, totalWeight]);
+  }, [jobTitle, domain, skills, criteria.length, totalWeight]);
 
   const showError = (field: string) => (touched[field] || attempted);
   const markTouched = (field: string) => setTouched(t => ({ ...t, [field]: true }));
@@ -668,19 +672,77 @@ export default function RequisitionBuilder() {
 
   /* ── actions ──────────────────────────────────────────────────────────── */
 
+  const buildPayload = (deploy: boolean): ConsoleRequisitionIn => ({
+    title: jobTitle.trim(),
+    domain: domain.trim(),
+    objective: objective.trim(),
+    skills,
+    tone,
+    sample_questions: sampleQuestions
+      .filter(q => q.text.trim())
+      .map(q => ({ id: q.id, text: q.text.trim() })),
+    screening_fields: fields.map(f => ({
+      id: f.id,
+      type: f.type,
+      label: f.label,
+      placeholder: f.placeholder,
+      required: f.required,
+      options: f.options,
+    })),
+    rubric: criteria.map(c => ({
+      id: c.id,
+      name: c.name,
+      description: c.description,
+      weight: c.weight,
+    })),
+    deploy,
+  });
+
+  const submit = async (deploy: boolean) => {
+    setSaving(true);
+    try {
+      const payload = buildPayload(deploy);
+      if (isEditing && existing) {
+        await consoleApi.updateRequisition(existing.id, payload);
+      } else {
+        await consoleApi.createRequisition(payload);
+      }
+      await queryClient.invalidateQueries({ queryKey: ['console'] });
+      toast(
+        deploy
+          ? `"${jobTitle}" deployed. Candidates can now be invited.`
+          : `"${jobTitle || 'Untitled requisition'}" saved as an offline draft.`,
+        deploy ? 'success' : 'info',
+      );
+      navigate('/console/requisitions');
+    } catch (err) {
+      const message =
+        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+        'Saving the requisition failed. Please try again.';
+      toast(message, 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleDeploy = () => {
     if (errors.length > 0) {
       setAttempted(true);
       toast('Resolve the errors below before deploying.', 'error');
       return;
     }
-    toast(`"${jobTitle}" deployed. Candidates can now be invited.`, 'success');
-    navigate('/console/requisitions');
+    if (saving) return;
+    void submit(true);
   };
 
   const handleSaveOffline = () => {
-    toast(`"${jobTitle || 'Untitled requisition'}" saved as an offline draft.`, 'info');
-    navigate('/console/requisitions');
+    if (!jobTitle.trim() || !domain.trim()) {
+      setAttempted(true);
+      toast('Job title and domain are required even for drafts.', 'error');
+      return;
+    }
+    if (saving) return;
+    void submit(false);
   };
 
   const handleCopyInterviewUrl = async () => {

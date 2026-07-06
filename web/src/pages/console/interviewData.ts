@@ -32,7 +32,9 @@ export interface ProctorFrame {
   id: string;
   at: string;
   seconds: number;
-  signal: 'Clear' | 'Attention shift' | 'Low light';
+  signal: 'Clear' | 'Attention shift' | 'Low light' | 'No face' | 'Multiple faces';
+  /** Presigned snapshot URL when a real proctor image exists. */
+  imageUrl?: string;
 }
 
 export interface InterviewReview extends InterviewRecord {
@@ -46,6 +48,9 @@ export interface InterviewReview extends InterviewRecord {
   transcript: TranscriptTurn[];
   proctorFrames: ProctorFrame[];
   rubric: RubricAssessment[];
+  /** Real recording peaks (0–100 ints) + duration when a recording exists. */
+  waveformPeaks?: number[] | null;
+  audioDurationSeconds?: number | null;
 }
 
 const MOCK_AUDIO_SRC = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';

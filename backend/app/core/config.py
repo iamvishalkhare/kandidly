@@ -25,6 +25,8 @@ class Settings(BaseSettings):
 
     # object store
     s3_endpoint: str = "http://localhost:9000"
+    # Browser-reachable endpoint for presigned URLs (empty → same as s3_endpoint)
+    s3_public_endpoint: str = ""
     s3_access_key: str = "kandidly"
     s3_secret_key: str = "kandidly-secret"
     s3_region: str = "us-east-1"

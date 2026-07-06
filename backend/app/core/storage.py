@@ -27,9 +27,15 @@ def _session() -> aioboto3.Session:
     return aioboto3.Session()
 
 
-def _client_kwargs() -> dict:
+def _client_kwargs(public: bool = False) -> dict:
+    # Presigned URLs are signed against the request host, so URLs handed to a
+    # browser must use the browser-reachable endpoint (e.g. localhost:9000),
+    # not the in-cluster one (minio:9000).
+    endpoint = settings.s3_endpoint
+    if public and settings.s3_public_endpoint:
+        endpoint = settings.s3_public_endpoint
     return {
-        "endpoint_url": settings.s3_endpoint,
+        "endpoint_url": endpoint,
         "aws_access_key_id": settings.s3_access_key,
         "aws_secret_access_key": settings.s3_secret_key,
         "region_name": settings.s3_region,
@@ -52,8 +58,8 @@ async def delete_object(bucket: str, key: str) -> None:
         await s3.delete_object(Bucket=bucket, Key=key)
 
 
-async def presign_get(bucket: str, key: str, ttl: int = PRESIGN_TTL) -> str:
-    async with _session().client("s3", **_client_kwargs()) as s3:
+async def presign_get(bucket: str, key: str, ttl: int = PRESIGN_TTL, public: bool = False) -> str:
+    async with _session().client("s3", **_client_kwargs(public=public)) as s3:
         return await s3.generate_presigned_url(
             "get_object", Params={"Bucket": bucket, "Key": key}, ExpiresIn=ttl
         )

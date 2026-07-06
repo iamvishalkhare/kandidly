@@ -8,12 +8,8 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Check, Copy, Search, SlidersHorizontal, Plus } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import ConsoleLayout from './ConsoleLayout';
-import {
-  MOCK_REQUISITIONS,
-  copyToClipboard,
-  getInterviewUrl,
-  type Requisition,
-} from './requisitionData';
+import { copyToClipboard, getInterviewUrl, type Requisition } from './requisitionData';
+import { useConsoleRequisitions, useToggleRequisitionStatus } from '../../lib/consoleApi';
 
 type StatusFilter = 'all' | 'live' | 'offline';
 
@@ -214,7 +210,8 @@ function ReqCard({
 /* -------------------------------------------------------------------------- */
 
 export default function ConsoleRequisitions() {
-  const [reqs, setReqs] = useState<Requisition[]>(MOCK_REQUISITIONS);
+  const { data: reqs = [], isLoading } = useConsoleRequisitions();
+  const toggleMutation = useToggleRequisitionStatus();
   const [search, setSearch] = useState('');
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [requirementsOpen, setRequirementsOpen] = useState(false);
@@ -223,11 +220,14 @@ export default function ConsoleRequisitions() {
   const [domainFilter, setDomainFilter] = useState('');
   const [requirementFilters, setRequirementFilters] = useState<string[]>([]);
 
-  const toggleStatus = useCallback((id: string) => {
-    setReqs(prev =>
-      prev.map(r => (r.id === id ? { ...r, live: !r.live } : r)),
-    );
-  }, []);
+  const toggleStatus = useCallback(
+    (id: string) => {
+      const req = reqs.find(r => r.id === id);
+      if (!req) return;
+      toggleMutation.mutate({ id, live: !req.live });
+    },
+    [reqs, toggleMutation],
+  );
 
   const domains = useMemo(
     () => Array.from(new Set(reqs.map(req => req.domain))).sort((a, b) => a.localeCompare(b)),
@@ -496,7 +496,9 @@ export default function ConsoleRequisitions() {
 
         {filtered.length === 0 && (
           <div className="py-16 flex flex-col items-center gap-2">
-            <p className="label-mono text-on-surface-variant">No requisitions match your search.</p>
+            <p className="label-mono text-on-surface-variant">
+              {isLoading ? 'Loading requisitions…' : 'No requisitions match your search.'}
+            </p>
           </div>
         )}
       </div>

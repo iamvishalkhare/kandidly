@@ -23,9 +23,12 @@ import {
 import { useWavesurfer } from '@wavesurfer/react';
 import Hover from 'wavesurfer.js/plugins/hover';
 import { cn } from '../../lib/utils';
+import { useToast } from '../../components/ui';
 import ConsoleLayout from './ConsoleLayout';
-import { getInterviewReview } from './interviewData';
-import type { InterviewReview as InterviewReviewData, TranscriptTurn } from './interviewData';
+import type { TranscriptTurn } from './interviewData';
+import { useConsoleReview, useReviewDecision, type ReviewData } from '../../lib/consoleApi';
+
+type InterviewReviewData = ReviewData;
 
 const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
   year: 'numeric',
@@ -138,11 +141,14 @@ function WaveformRecording({
   const [playing, setPlaying] = useState(false);
   const durationSeconds = Math.max(1, interview.transcript.at(-1)?.seconds ?? 1);
 
-  // Placeholder amplitude data until real recordings are wired up — swap for exportPeaks() from the actual audio.
-  const peaks = useMemo(
-    () => [Array.from({ length: 200 }, (_, i) => (24 + ((i * 17 + i * i * 3) % 58)) / 100)],
-    [],
-  );
+  // Real recording peaks when available (0–100 ints from the backend);
+  // deterministic placeholder bars otherwise so the timeline stays usable.
+  const peaks = useMemo(() => {
+    if (interview.waveformPeaks?.length) {
+      return [interview.waveformPeaks.map(v => Math.max(0.02, v / 100))];
+    }
+    return [Array.from({ length: 200 }, (_, i) => (24 + ((i * 17 + i * i * 3) % 58)) / 100)];
+  }, [interview.waveformPeaks]);
   const plugins = useMemo(
     () => [
       Hover.create({
@@ -234,13 +240,15 @@ function WaveformRecording({
         <span>0:00</span>
         <span>{formatTimeline(durationSeconds)}</span>
       </div>
-      <audio
-        ref={audioRef}
-        src={interview.audioSrc}
-        onEnded={() => setPlaying(false)}
-        onPause={() => setPlaying(false)}
-        className="hidden"
-      />
+      {interview.audioSrc && (
+        <audio
+          ref={audioRef}
+          src={interview.audioSrc}
+          onEnded={() => setPlaying(false)}
+          onPause={() => setPlaying(false)}
+          className="hidden"
+        />
+      )}
     </div>
   );
 }
@@ -317,8 +325,18 @@ function ProctorRoll({ interview }: { interview: InterviewReviewData }) {
                     `linear-gradient(180deg, #282933, #11131c)`,
                 }}
               >
-                <div className="absolute left-1/2 top-6 size-8 -translate-x-1/2 border border-outline-variant bg-surface-container-highest" />
-                <div className="absolute left-8 right-8 bottom-4 h-10 border border-outline-variant bg-surface-container-high" />
+                {frame.imageUrl ? (
+                  <img
+                    src={frame.imageUrl}
+                    alt={`Proctor frame at ${frame.at}`}
+                    className="absolute inset-0 h-full w-full object-cover"
+                  />
+                ) : (
+                  <>
+                    <div className="absolute left-1/2 top-6 size-8 -translate-x-1/2 border border-outline-variant bg-surface-container-highest" />
+                    <div className="absolute left-8 right-8 bottom-4 h-10 border border-outline-variant bg-surface-container-high" />
+                  </>
+                )}
                 <div className="absolute inset-x-0 bottom-0 h-px bg-primary-container/50" />
               </div>
               <div className="p-2">
@@ -377,11 +395,14 @@ function RubricAssessment({ interview }: { interview: InterviewReviewData }) {
 
 export default function InterviewReview() {
   const { interviewId } = useParams<{ interviewId: string }>();
-  const interview = getInterviewReview(interviewId);
+  const { data: interview, isLoading, isError } = useConsoleReview(interviewId);
+  const reviewMutation = useReviewDecision(interviewId);
+  const { toast } = useToast();
   const transcriptRefs = useRef<Record<string, HTMLDivElement | null>>({});
-  const [activeTranscriptId, setActiveTranscriptId] = useState(interview?.transcript[0]?.id ?? '');
-  const [currentSeconds, setCurrentSeconds] = useState(interview?.transcript[0]?.seconds ?? 0);
-  const [decision, setDecision] = useState<ReviewDecision | null>(null);
+  const [activeTranscriptId, setActiveTranscriptId] = useState('');
+  const [currentSeconds, setCurrentSeconds] = useState(0);
+  const [localDecision, setLocalDecision] = useState<ReviewDecision | null>(null);
+  const decision = localDecision ?? interview?.reviewDecision ?? null;
 
   const recommendedDecision = useMemo<ReviewDecision | null>(() => {
     if (!interview) return null;
@@ -397,13 +418,40 @@ export default function InterviewReview() {
             Back to interviews
           </Link>
           <div className="mt-8 border border-outline-variant bg-surface p-8">
-            <p className="label-mono text-error">Interview not found</p>
-            <p className="mt-2 text-on-surface-variant">The requested interview review does not exist in the current dataset.</p>
+            {isLoading && !isError ? (
+              <p className="label-mono text-on-surface-variant">Loading interview review…</p>
+            ) : (
+              <>
+                <p className="label-mono text-error">Interview not found</p>
+                <p className="mt-2 text-on-surface-variant">The requested interview review does not exist in the current dataset.</p>
+              </>
+            )}
           </div>
         </div>
       </ConsoleLayout>
     );
   }
+
+  const markDecision = (action: ReviewDecision) => {
+    if (interview.scoringStatus !== 'Done') {
+      toast('Scoring is still in progress — decisions unlock once the report is ready.', 'info');
+      return;
+    }
+    setLocalDecision(action);
+    reviewMutation.mutate(
+      { decision: action },
+      {
+        onError: err => {
+          setLocalDecision(null);
+          const message =
+            (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+            'Saving the decision failed. Please try again.';
+          toast(message, 'error');
+        },
+        onSuccess: () => toast(`Review marked ${action}.`, 'success'),
+      },
+    );
+  };
 
   const jumpToTranscript = (turn: TranscriptTurn) => {
     setCurrentSeconds(turn.seconds);
@@ -433,7 +481,7 @@ export default function InterviewReview() {
             </Link>
             <h1 className="font-display text-headline-lg text-on-surface tracking-tight mt-2">{interview.candidateName}</h1>
             <p className="label-mono text-on-surface-variant mt-1">
-              {interview.id.toUpperCase()} / {interview.requisitionId} / {interview.requisitionTitle}
+              {interview.code.toUpperCase()} / {interview.requisitionId} / {interview.requisitionTitle}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -441,12 +489,14 @@ export default function InterviewReview() {
               <button
                 key={action}
                 type="button"
-                onClick={() => setDecision(action)}
+                onClick={() => markDecision(action)}
+                disabled={reviewMutation.isPending}
                 className={cn(
                   'h-10 px-4 border label-mono transition-colors duration-150 flex items-center gap-2',
                   decision === action
                     ? 'border-primary-container bg-primary-container text-on-primary-container'
                     : 'border-outline-variant text-on-surface-variant hover:border-primary-container hover:text-primary-fixed-dim',
+                  reviewMutation.isPending && 'opacity-60 cursor-wait',
                 )}
               >
                 {action === 'Reject' ? <XCircle size={16} /> : <CheckCircle2 size={16} />}
@@ -464,9 +514,11 @@ export default function InterviewReview() {
               <div>
                 <div className="flex flex-wrap items-center gap-2">
                   <StatusPill status={interview.scoringStatus} />
-                  <span className="inline-flex border border-primary-container px-2 py-1 label-mono text-primary-fixed-dim">
-                    AI recommends {recommendedDecision}
-                  </span>
+                  {interview.scoringStatus === 'Done' && (
+                    <span className="inline-flex border border-primary-container px-2 py-1 label-mono text-primary-fixed-dim">
+                      AI recommends {recommendedDecision}
+                    </span>
+                  )}
                   {decision && (
                     <span className="inline-flex border border-outline-variant px-2 py-1 label-mono text-on-surface-variant">
                       Review marked {decision}
@@ -516,8 +568,21 @@ export default function InterviewReview() {
                 <h2 className="label-mono text-on-surface">Review Trail</h2>
               </div>
               <div className="p-4 space-y-3 text-sm text-on-surface-variant">
-                <p>Assessment generated after transcript scoring completed.</p>
-                <p>Decision state is local until the review API is connected.</p>
+                {interview.reviewTrail.length > 0 ? (
+                  interview.reviewTrail.map((entry, i) => (
+                    <div key={`${entry.action}-${i}`} className="flex items-start justify-between gap-3">
+                      <p>
+                        <span className="text-on-surface">{entry.actor}</span> · {entry.action}
+                        {entry.detail ? ` — ${entry.detail}` : ''}
+                      </p>
+                      <span className="label-mono shrink-0">
+                        {dateTimeFormatter.format(new Date(entry.at))}
+                      </span>
+                    </div>
+                  ))
+                ) : (
+                  <p>No review activity yet — scoring events will appear here.</p>
+                )}
               </div>
             </section>
           </div>

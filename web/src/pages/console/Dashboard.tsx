@@ -15,24 +15,7 @@ import {
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import ConsoleLayout from './ConsoleLayout';
-
-/* -------------------------------------------------------------------------- */
-/*  Mock data                                                                 */
-/* -------------------------------------------------------------------------- */
-
-const MOCK_INTERVIEWS = [
-  { id: 'CAN-8921A', requisition: 'REQ-SENIOR-DEV', score: 92, duration: '45m 12s' },
-  { id: 'CAN-7734B', requisition: 'REQ-DATA-SCI', score: 87, duration: '52m 05s' },
-  { id: 'CAN-9102C', requisition: 'REQ-PROD-MGR', score: 74, duration: '38m 44s' },
-  { id: 'CAN-4451D', requisition: 'REQ-FRONTEND', score: 91, duration: '41m 20s' },
-  { id: 'CAN-5567E', requisition: 'REQ-DEVOPS', score: 68, duration: '47m 33s' },
-  { id: 'CAN-3389F', requisition: 'REQ-SENIOR-DEV', score: 83, duration: '50m 18s' },
-  { id: 'CAN-2214G', requisition: 'REQ-DATA-SCI', score: 79, duration: '44m 56s' },
-  { id: 'CAN-8876H', requisition: 'REQ-FRONTEND', score: 95, duration: '39m 02s' },
-] as const;
-
-const WEEKLY_COMPLETED = [42, 58, 37, 65, 72, 53, 80, 68, 91, 76, 85, 94];
-const WEEKLY_DROPPED = [8, 12, 6, 14, 10, 16, 9, 11, 7, 13, 5, 8];
+import { formatDuration, toLedgerRow, useConsoleDashboard } from '../../lib/consoleApi';
 
 const MINI_BAR_HEIGHTS = [35, 55, 45, 70, 85, 60, 42];
 
@@ -53,7 +36,7 @@ const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
 /* -------------------------------------------------------------------------- */
 
 function BarChartSVG({ data, labels }: { data: number[]; labels: string[] }) {
-  const max = Math.max(...data);
+  const max = Math.max(...data, 1);
   const chartH = 160;
   const chartW = 480;
   const barW = chartW / data.length - 6;
@@ -116,7 +99,7 @@ function BarChartSVG({ data, labels }: { data: number[]; labels: string[] }) {
 }
 
 function AreaChartSVG({ data, labels }: { data: number[]; labels: string[] }) {
-  const max = Math.max(...data);
+  const max = Math.max(...data, 1);
   const chartH = 160;
   const chartW = 480;
   const yTicks = [0, 5, 10, 15, 20];
@@ -190,8 +173,13 @@ function AreaChartSVG({ data, labels }: { data: number[]; labels: string[] }) {
 export default function ConsoleDashboard() {
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [now, setNow] = useState(() => new Date());
+  const { data: dashboard } = useConsoleDashboard();
 
   const weekLabels = Array.from({ length: 12 }, (_, i) => `W${i + 1}`);
+  const weeklyCompleted = dashboard?.weekly_completed.map(p => p.count) ?? Array(12).fill(0);
+  const weeklyDropped = dashboard?.weekly_dropped.map(p => p.count) ?? Array(12).fill(0);
+  const recentInterviews = (dashboard?.recent_interviews ?? []).map(toLedgerRow);
+  const averageScore = dashboard?.average_score ?? null;
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -227,9 +215,13 @@ export default function ConsoleDashboard() {
               <CheckCircle2 size={20} className="text-text-muted group-hover:text-primary-fixed-dim transition-colors duration-150" />
             </div>
             <p className="font-display text-[44px] font-bold tracking-tight leading-none text-primary-fixed-dim tabular">
-              1,248
+              {(dashboard?.completed_total ?? 0).toLocaleString()}
             </p>
-            <p className="label-mono text-primary-fixed-dim">+14% vs last week</p>
+            <p className="label-mono text-primary-fixed-dim">
+              {dashboard?.completed_delta_pct != null
+                ? `${dashboard.completed_delta_pct >= 0 ? '+' : ''}${dashboard.completed_delta_pct}% vs last week`
+                : 'No prior-week data'}
+            </p>
           </div>
 
           {/* Average Score */}
@@ -239,10 +231,13 @@ export default function ConsoleDashboard() {
               <BarChart3 size={20} className="text-text-muted group-hover:text-primary-fixed-dim transition-colors duration-150" />
             </div>
             <p className="font-display text-[44px] font-bold tracking-tight leading-none text-on-surface tabular">
-              86.4
+              {averageScore != null ? averageScore : '—'}
             </p>
             <div className="w-full h-1 bg-surface-container-highest">
-              <div className="h-full bg-primary-container" style={{ width: '86.4%' }} />
+              <div
+                className="h-full bg-primary-container"
+                style={{ width: `${Math.min(100, averageScore ?? 0)}%` }}
+              />
             </div>
           </div>
 
@@ -253,9 +248,11 @@ export default function ConsoleDashboard() {
               <Briefcase size={20} className="text-text-muted group-hover:text-primary-fixed-dim transition-colors duration-150" />
             </div>
             <p className="font-display text-[44px] font-bold tracking-tight leading-none text-on-surface tabular">
-              34
+              {dashboard?.active_requisitions ?? 0}
             </p>
-            <p className="label-mono text-on-surface-variant">Across 12 departments</p>
+            <p className="label-mono text-on-surface-variant">
+              Across {dashboard?.domain_count ?? 0} domains
+            </p>
           </div>
 
           {/* System Load */}
@@ -301,12 +298,12 @@ export default function ConsoleDashboard() {
                 </tr>
               </thead>
               <tbody className="bg-surface">
-                {MOCK_INTERVIEWS.slice(0, visibleCount).map(row => {
-                  const strong = row.score >= 80;
+                {recentInterviews.slice(0, visibleCount).map(row => {
+                  const strong = (row.finalScore ?? 0) >= 80;
                   return (
                     <tr key={row.id} className="border-b border-outline-variant last:border-b-0 hover:bg-surface-container transition-colors duration-150">
-                      <td className="p-3 text-on-surface">{row.id}</td>
-                      <td className="p-3 text-on-surface-variant">{row.requisition}</td>
+                      <td className="p-3 text-on-surface">{row.code} · {row.candidateName}</td>
+                      <td className="p-3 text-on-surface-variant">{row.requisitionId}</td>
                       <td className="p-3">
                         <span
                           className={cn(
@@ -314,12 +311,12 @@ export default function ConsoleDashboard() {
                             strong ? 'border-primary-container text-primary-fixed-dim' : 'border-outline-variant text-on-surface'
                           )}
                         >
-                          {row.score} / 100
+                          {row.finalScore != null ? `${Math.round(row.finalScore)} / 100` : 'Evaluating'}
                         </span>
                       </td>
-                      <td className="p-3 text-on-surface-variant">{row.duration}</td>
+                      <td className="p-3 text-on-surface-variant">{formatDuration(row.durationSeconds)}</td>
                       <td className="p-3 text-right">
-                        <Link to="/console">
+                        <Link to={`/console/interviews/${row.id}`}>
                           <ArrowRight size={16} className="inline-block text-text-muted hover:text-primary-fixed-dim transition-colors duration-150" />
                         </Link>
                       </td>
@@ -330,7 +327,7 @@ export default function ConsoleDashboard() {
             </table>
           </div>
 
-          {visibleCount < MOCK_INTERVIEWS.length && (
+          {visibleCount < recentInterviews.length && (
             <div className="p-3 bg-surface-container-lowest border-t border-outline-variant flex justify-center">
               <button
                 onClick={() => setVisibleCount(c => c + PAGE_SIZE)}
@@ -347,13 +344,13 @@ export default function ConsoleDashboard() {
           {/* Interviews Completed Over Time */}
           <div className="bg-surface p-5 space-y-4">
             <h3 className="label-mono text-on-surface-variant">// Interviews_Completed_Over_Time</h3>
-            <BarChartSVG data={WEEKLY_COMPLETED} labels={weekLabels} />
+            <BarChartSVG data={weeklyCompleted} labels={weekLabels} />
           </div>
 
           {/* Interviews Dropped Midway */}
           <div className="bg-surface p-5 space-y-4">
             <h3 className="label-mono text-on-surface-variant">// Interviews_Dropped_Midway</h3>
-            <AreaChartSVG data={WEEKLY_DROPPED} labels={weekLabels} />
+            <AreaChartSVG data={weeklyDropped} labels={weekLabels} />
           </div>
         </section>
       </div>

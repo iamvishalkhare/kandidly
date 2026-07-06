@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import make_asgi_app
 
-from app.api import admin, candidate, internal, public
+from app.api import admin, candidate, console, internal, public
 from app.core.config import settings
 from app.core.errors import install_exception_handlers
 
@@ -32,6 +32,7 @@ def create_app() -> FastAPI:
     app.include_router(public.router)
     app.include_router(candidate.router)
     app.include_router(admin.router)
+    app.include_router(console.router)
     app.include_router(internal.router)
 
     # Prometheus metrics (SPEC §15).

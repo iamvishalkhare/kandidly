@@ -7,9 +7,8 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { ArrowRight, CalendarClock, Check, ChevronDown, Filter, RotateCcw, Search, SlidersHorizontal } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import ConsoleLayout from './ConsoleLayout';
-import { MOCK_INTERVIEW_REVIEWS } from './interviewData';
 import type { InterviewDecision } from './interviewData';
-import { MOCK_REQUISITIONS } from './requisitionData';
+import { useConsoleInterviews } from '../../lib/consoleApi';
 
 const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
   year: 'numeric',
@@ -220,6 +219,7 @@ function DecisionPill({ decision }: { decision: InterviewDecision }) {
 
 export default function ConsoleInterviews() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const { data: interviews = [], isLoading } = useConsoleInterviews();
 
   const requisitionIdFilter = getParam(searchParams, 'requisitionId');
   const requisitionTitleFilter = getParam(searchParams, 'requisitionTitle');
@@ -231,16 +231,16 @@ export default function ConsoleInterviews() {
   const searchFilter = getParam(searchParams, 'q');
 
   const requisitionIds = useMemo(
-    () => Array.from(new Set(MOCK_REQUISITIONS.map(req => req.code))).sort((a, b) => a.localeCompare(b)),
-    [],
+    () => Array.from(new Set(interviews.map(row => row.requisitionId))).sort((a, b) => a.localeCompare(b)),
+    [interviews],
   );
   const requisitionTitles = useMemo(
-    () => Array.from(new Set(MOCK_REQUISITIONS.map(req => req.title))).sort((a, b) => a.localeCompare(b)),
-    [],
+    () => Array.from(new Set(interviews.map(row => row.requisitionTitle))).sort((a, b) => a.localeCompare(b)),
+    [interviews],
   );
   const domains = useMemo(
-    () => Array.from(new Set(MOCK_REQUISITIONS.map(req => req.domain))).sort((a, b) => a.localeCompare(b)),
-    [],
+    () => Array.from(new Set(interviews.map(row => row.domain))).sort((a, b) => a.localeCompare(b)),
+    [interviews],
   );
 
   const setFilter = (key: string, value: string) => {
@@ -257,7 +257,7 @@ export default function ConsoleInterviews() {
     setSearchParams({}, { replace: true });
   };
 
-  const filtered = MOCK_INTERVIEW_REVIEWS.filter(interview => {
+  const filtered = interviews.filter(interview => {
     const searchTerm = searchFilter.trim().toLowerCase();
     const concludedAt = new Date(interview.concludedAt).getTime();
     const startsAt = startFilter ? new Date(startFilter).getTime() : Number.NEGATIVE_INFINITY;
@@ -281,7 +281,7 @@ export default function ConsoleInterviews() {
     const matchesScoringStatus =
       scoringStatusFilter.length === 0 || interview.scoringStatus === scoringStatusFilter;
     const matchesDecision =
-      decisionFilter.length === 0 || interview.recommendation === decisionFilter;
+      decisionFilter.length === 0 || interview.decision === decisionFilter;
     const matchesDateRange = concludedAt >= startsAt && concludedAt <= endsAt;
 
     return (
@@ -451,7 +451,7 @@ export default function ConsoleInterviews() {
               >
                 <div className="px-4 py-4">
                   <p className="font-medium text-on-surface">{interview.candidateName}</p>
-                  <p className="label-mono text-on-surface-variant mt-1">{interview.id.toUpperCase()}</p>
+                  <p className="label-mono text-on-surface-variant mt-1">{interview.code.toUpperCase()}</p>
                 </div>
                 <div className="px-4 py-4 xl:border-l xl:border-outline-variant label-mono text-primary-fixed-dim">
                   {interview.requisitionId}
@@ -475,7 +475,11 @@ export default function ConsoleInterviews() {
                   </span>
                 </div>
                 <div className="px-4 py-4 xl:border-l xl:border-outline-variant">
-                  <DecisionPill decision={interview.recommendation} />
+                  {interview.decision ? (
+                    <DecisionPill decision={interview.decision} />
+                  ) : (
+                    <span className="label-mono text-on-surface-variant">—</span>
+                  )}
                 </div>
                 <div className="px-4 py-4 xl:border-l xl:border-outline-variant label-mono text-on-surface-variant tabular flex items-center justify-between gap-3">
                   <span>{dateTimeFormatter.format(new Date(interview.concludedAt))}</span>
@@ -488,7 +492,9 @@ export default function ConsoleInterviews() {
           {filtered.length === 0 && (
             <div className="py-16 flex flex-col items-center gap-2 text-center">
               <Filter size={20} className="text-on-surface-variant" />
-              <p className="label-mono text-on-surface-variant">No interviews match the active filters.</p>
+              <p className="label-mono text-on-surface-variant">
+                {isLoading ? 'Loading interviews…' : 'No interviews match the active filters.'}
+              </p>
             </div>
           )}
         </section>
