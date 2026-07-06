@@ -542,6 +542,7 @@ function BuilderForm({
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const isEditing = !!existing;
+  const currentStatus = existing?.status ?? 'draft';
   const interviewUrl = existing?.invite_token ? getInterviewUrl(existing.invite_token) : null;
   const [copiedInterviewUrl, setCopiedInterviewUrl] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -715,7 +716,9 @@ function BuilderForm({
       toast(
         deploy
           ? `"${jobTitle}" deployed. Candidates can now be invited.`
-          : `"${jobTitle || 'Untitled requisition'}" saved as an offline draft.`,
+          : errors.length > 0
+            ? `"${jobTitle || 'Untitled requisition'}" saved as draft.`
+            : `"${jobTitle}" saved as offline.`,
         deploy ? 'success' : 'info',
       );
       navigate('/console/requisitions');
@@ -773,30 +776,106 @@ function BuilderForm({
         <div className="w-full max-w-[1440px] flex flex-col border border-outline-variant">
           {/* Title block */}
           <div className="p-5 border-b border-outline-variant bg-surface-container-lowest">
-            <div className="mb-3 flex justify-start">
+            <div className="mb-3 flex items-center justify-between">
               <Link
                 to="/console/requisitions"
                 className="h-9 px-3 border border-outline-variant text-on-surface-variant label-mono flex items-center gap-2 hover:bg-surface-container hover:text-on-surface transition-colors duration-150"
               >
                 <ArrowLeft size={14} />
-                Back
+                ALL REQUISITIONS
               </Link>
+              {currentStatus === 'open' && (
+                <div
+                  className="relative group px-3 py-1 label-mono text-xs flex items-center gap-2 select-none border border-[var(--emerald-chip-text)]/20 bg-[var(--emerald-chip-bg)] text-[var(--emerald-chip-text)] shrink-0 cursor-help"
+                >
+                  <span className="size-2 bg-[var(--emerald-chip-text)] blink" />
+                  LIVE
+
+                  {/* Tooltip Overlay */}
+                  <div className="absolute top-full right-0 mt-3 hidden group-hover:block bg-surface-container-high border border-outline-variant text-on-surface text-body-md rounded-lg p-3.5 shadow-lg z-50 w-80 pointer-events-none normal-case tracking-normal">
+                    <p className="font-semibold text-body-lg text-primary-fixed-dim flex items-center gap-1.5 mb-1">
+                      <Check size={16} />
+                      Live State
+                    </p>
+                    <p className="text-on-surface-variant text-body-md">
+                      Requisition is Live. Users should be able to land on interview page and attempt the interview.
+                    </p>
+                    {/* Arrow */}
+                    <div className="absolute bottom-full right-6 w-3 h-3 bg-surface-container-high border-l border-t border-outline-variant rotate-45 -mb-1.5" />
+                  </div>
+                </div>
+              )}
+              {currentStatus === 'draft' && (
+                <div
+                  className="relative group px-3 py-1 label-mono text-xs flex items-center gap-2 select-none border border-[var(--amber-chip-text)]/20 bg-[var(--amber-chip-bg)] text-[var(--amber-chip-text)] shrink-0 cursor-help"
+                >
+                  <span className="size-2 bg-[var(--amber-chip-text)]" />
+                  DRAFT
+
+                  {/* Tooltip Overlay */}
+                  <div className="absolute top-full right-0 mt-3 hidden group-hover:block bg-surface-container-high border border-outline-variant text-on-surface text-body-md rounded-lg p-3.5 shadow-lg z-50 w-80 pointer-events-none normal-case tracking-normal">
+                    {errors.length > 0 ? (
+                      <>
+                        <p className="font-semibold text-body-lg mb-2 text-error flex items-center gap-1.5">
+                          <AlertTriangle size={16} />
+                          Necessary steps to publish:
+                        </p>
+                        <ul className="list-disc pl-4 space-y-1.5 text-on-surface-variant text-body-md">
+                          {errors.map((err, i) => (
+                            <li key={i}>{err}</li>
+                          ))}
+                        </ul>
+                      </>
+                    ) : (
+                      <p className="font-semibold text-body-lg text-primary-fixed-dim flex items-center gap-1.5">
+                        <Check size={16} />
+                        All checks passed. Ready to deploy!
+                      </p>
+                    )}
+                    {/* Arrow */}
+                    <div className="absolute bottom-full right-6 w-3 h-3 bg-surface-container-high border-l border-t border-outline-variant rotate-45 -mb-1.5" />
+                  </div>
+                </div>
+              )}
+              {currentStatus !== 'open' && currentStatus !== 'draft' && (
+                <div
+                  className="relative group px-3 py-1 label-mono text-xs flex items-center gap-2 select-none border border-outline-variant bg-surface-container-lowest text-on-surface-variant shrink-0 cursor-help"
+                >
+                  <span className="size-2 bg-outline" />
+                  OFFLINE
+
+                  {/* Tooltip Overlay */}
+                  <div className="absolute top-full right-0 mt-3 hidden group-hover:block bg-surface-container-high border border-outline-variant text-on-surface text-body-md rounded-lg p-3.5 shadow-lg z-50 w-80 pointer-events-none normal-case tracking-normal">
+                    <p className="font-semibold text-body-lg text-on-surface flex items-center gap-1.5 mb-1">
+                      <span className="size-2 bg-outline rounded-full" />
+                      Offline State
+                    </p>
+                    <p className="text-on-surface-variant text-body-md">
+                      Requisition is ready to be made Live.
+                    </p>
+                    {/* Arrow */}
+                    <div className="absolute bottom-full right-6 w-3 h-3 bg-surface-container-high border-l border-t border-outline-variant rotate-45 -mb-1.5" />
+                  </div>
+                </div>
+              )}
             </div>
-            <div className="grid grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)_minmax(280px,360px)] gap-4 items-end">
-              <h1 className="font-display text-headline-lg text-on-surface">
-                {isEditing ? 'Edit Requisition' : 'New Requisition'}
-              </h1>
-              <p className="text-body-md text-on-surface-variant max-w-[80ch]">
-                Define the role, required skills, candidate screening questions, AI interviewer style,
-                and scoring rubric in one structured setup. When deployed, this requisition becomes
-                a shareable candidate interview link that collects form responses first, then guides
-                candidates into the voice interview and returns scored evidence for review.
-              </p>
+            <div className="flex flex-col xl:flex-row xl:items-start justify-between gap-4">
+              <div className="flex flex-col gap-2">
+                <h1 className="font-display text-headline-lg text-on-surface">
+                  {isEditing ? 'Edit Requisition' : 'New Requisition'}
+                </h1>
+                <p className="text-body-md text-on-surface-variant max-w-[80ch]">
+                  Define the role, required skills, candidate screening questions, AI interviewer style,
+                  and scoring rubric in one structured setup. When deployed, this requisition becomes
+                  a shareable candidate interview link that collects form responses first, then guides
+                  candidates into the voice interview and returns scored evidence for review.
+                </p>
+              </div>
               {interviewUrl && (
                 <button
                   type="button"
                   onClick={handleCopyInterviewUrl}
-                  className="min-h-12 border border-primary-container bg-primary-container text-on-primary-container px-4 label-mono flex items-center justify-between gap-3 hover:bg-transparent hover:text-primary-fixed-dim transition-colors duration-150"
+                  className="min-h-12 border border-primary-container bg-primary-container text-on-primary-container px-4 label-mono flex items-center justify-between gap-3 hover:bg-transparent hover:text-primary-fixed-dim transition-colors duration-150 w-full xl:w-72 shrink-0"
                   title={interviewUrl}
                 >
                   <span className="truncate">Copy Interview URL</span>
@@ -1072,9 +1151,14 @@ function BuilderForm({
               {/* Canvas — candidate-facing preview */}
               <div
                 className={cn(
-                  'w-full flex flex-col border bg-surface-container-lowest min-h-[360px] transition-colors duration-150',
+                  'w-full flex flex-col border min-h-[360px] transition-colors duration-150',
                   dragging ? 'border-primary-container' : 'border-outline-variant',
                 )}
+                style={{
+                  backgroundColor: '#f8f9fa',
+                  backgroundImage: 'linear-gradient(rgba(0, 0, 0, 0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(0, 0, 0, 0.04) 1px, transparent 1px)',
+                  backgroundSize: '20px 20px',
+                }}
                 onDragOver={e => {
                   if (!dragging) return;
                   e.preventDefault();
@@ -1252,64 +1336,76 @@ function BuilderForm({
             <div className="flex items-center justify-between mb-4">
               <h2 className="font-display text-headline-md text-on-surface">07. Assessment Rubrics</h2>
             </div>
-            <div className="flex flex-col border border-outline-variant bg-surface-container-lowest">
-              {/* Table header */}
-              <div className="grid grid-cols-12 border-b border-outline-variant bg-surface-variant/30">
-                <div className="col-span-7 p-3 border-r border-outline-variant label-mono text-on-surface-variant">Criterion</div>
-                <div className="col-span-3 p-3 border-r border-outline-variant label-mono text-on-surface-variant">Weightage (%)</div>
-                <div className="col-span-2 p-3 label-mono text-on-surface-variant text-center">Action</div>
-              </div>
-
+            <div className="flex flex-col gap-4">
               {criteria.map(c => (
-                <div key={c.id} className="grid grid-cols-12 border-b border-outline-variant">
-                  <div className="col-span-7 border-r border-outline-variant p-3 flex flex-col gap-2">
+                <div key={c.id} className="border border-outline-variant p-4 flex flex-col gap-3 bg-surface-container-lowest">
+                  {/* Top Row: Name on the left, Weightage & Delete on the right */}
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
                     <input
                       type="text"
                       value={c.name}
                       onChange={e => updateCriterion(c.id, { name: e.target.value })}
                       placeholder="e.g. Technical Proficiency"
-                      className="bg-transparent border-none p-0 w-full text-body-md text-on-surface focus:outline-none focus:ring-0"
+                      className="bg-transparent border-none p-0 flex-1 font-display text-body-lg text-on-surface focus:outline-none focus:ring-0 placeholder:text-on-surface-variant/40"
                     />
+                    <div className="flex items-center gap-4 shrink-0">
+                      <div className="flex items-center gap-2">
+                        <span className="label-mono text-on-surface-variant text-body-sm">Weightage:</span>
+                        <div className="relative flex items-center">
+                          <input
+                            type="number"
+                            value={c.weight || ''}
+                            onChange={e => updateCriterion(c.id, { weight: Number(e.target.value) || 0 })}
+                            placeholder="0"
+                            className="bg-surface border border-outline-variant focus:border-primary rounded-md pl-3 pr-8 py-1.5 w-24 text-right text-body-md text-on-surface focus:outline-none transition-colors duration-150"
+                          />
+                          <span className="absolute right-3 text-on-surface-variant text-body-md pointer-events-none select-none">%</span>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeCriterion(c.id)}
+                        className="text-error hover:bg-error/10 p-2 rounded transition-colors duration-150 flex items-center justify-center"
+                        title="Remove criteria"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Bottom Row: Description (full-width textarea) */}
+                  <div className="w-full">
                     <textarea
                       value={c.description}
                       onChange={e => updateCriterion(c.id, { description: e.target.value })}
                       placeholder="Describe what and how to judge for this criterion..."
-                      className="bg-transparent border border-outline-variant p-2 w-full h-12 text-body-md text-on-surface focus:outline-none focus:ring-0 resize-none"
+                      className={cn(
+                        'bg-surface-container-lowest border rounded-lg p-3 w-full h-16 text-body-md text-on-surface focus:outline-none transition-colors duration-150 resize-none placeholder:text-on-surface-variant/40',
+                        attempted && !c.description.trim()
+                          ? 'border-error focus:border-error focus:ring-1 focus:ring-error'
+                          : 'border-outline-variant focus:border-primary',
+                      )}
                     />
-                  </div>
-                  <div className="col-span-3 border-r border-outline-variant flex items-start">
-                    <input
-                      type="number"
-                      value={c.weight}
-                      onChange={e => updateCriterion(c.id, { weight: Number(e.target.value) || 0 })}
-                      placeholder="0"
-                      className="bg-transparent border-none p-3 w-full text-body-md text-on-surface focus:outline-none focus:ring-0"
-                    />
-                  </div>
-                  <div className="col-span-2 flex items-start justify-center">
-                    <button
-                      type="button"
-                      onClick={() => removeCriterion(c.id)}
-                      className="text-error hover:bg-error/10 w-full py-3 transition-colors duration-150 flex items-center justify-center"
-                    >
-                      <Trash2 size={16} />
-                    </button>
                   </div>
                 </div>
               ))}
 
-              {/* Summary row */}
-              <div className="grid grid-cols-12 bg-surface-variant/10">
-                <div className="col-span-7 p-3 border-r border-outline-variant label-mono text-right">Total Weightage</div>
-                <div
-                  className={cn(
-                    'col-span-3 p-3 border-r border-outline-variant label-mono font-bold',
-                    totalWeight === 100 ? 'text-primary-fixed-dim' : 'text-error',
+              {/* Summary row / Status bar */}
+              <div className="p-4 bg-surface-variant/10 border border-outline-variant flex justify-between items-center">
+                <span className="label-mono text-on-surface-variant">Total Rubric Weightage</span>
+                <div className="flex items-center gap-2">
+                  <span
+                    className={cn(
+                      'text-headline-md font-bold',
+                      totalWeight === 100 ? 'text-primary-fixed-dim' : 'text-error',
+                    )}
+                  >
+                    {totalWeight}%
+                  </span>
+                  {totalWeight !== 100 && (
+                    <span className="label-mono text-error text-body-sm">(Must total 100%)</span>
                   )}
-                >
-                  {totalWeight}%
                 </div>
-                <div className="col-span-2 bg-surface-container-lowest" />
               </div>
             </div>
             <button
@@ -1334,12 +1430,27 @@ function BuilderForm({
       <div className="h-14 border-t border-outline-variant bg-surface-container-lowest flex justify-between items-center px-5 sticky bottom-0 z-30 shrink-0">
         <div className="flex items-center gap-2">
           {errors.length > 0 ? (
-            <>
+            <div className="relative group flex items-center gap-2 cursor-help">
               <AlertTriangle size={16} className="text-error" />
-              <span className="label-mono text-error">
+              <span className="label-mono text-error border-b border-dashed border-error pb-0.5">
                 {errors.length} {errors.length === 1 ? 'Error' : 'Errors'} Needs Resolution
               </span>
-            </>
+              
+              {/* Tooltip */}
+              <div className="absolute bottom-full left-0 mb-3 hidden group-hover:block bg-surface-container-high border border-outline-variant text-on-surface text-body-md rounded-lg p-3.5 shadow-lg z-50 w-80 pointer-events-none">
+                <p className="font-semibold text-body-lg mb-2 text-error flex items-center gap-1.5">
+                  <AlertTriangle size={16} />
+                  Necessary steps to publish:
+                </p>
+                <ul className="list-disc pl-4 space-y-1.5 text-on-surface-variant text-body-md">
+                  {errors.map((err, i) => (
+                    <li key={i}>{err}</li>
+                  ))}
+                </ul>
+                {/* Arrow */}
+                <div className="absolute top-full left-6 w-3 h-3 bg-surface-container-high border-r border-b border-outline-variant rotate-45 -mt-1.5" />
+              </div>
+            </div>
           ) : (
             <span className="label-mono text-primary-fixed-dim">All checks passed</span>
           )}
@@ -1350,7 +1461,7 @@ function BuilderForm({
             onClick={handleSaveOffline}
             className="label-mono text-on-surface uppercase border border-outline-variant px-5 py-2 hover:bg-surface-variant hover:text-error hover:border-error transition-colors duration-150"
           >
-            Save as Offline
+            {errors.length > 0 ? 'Save as Draft' : 'Save as Offline'}
           </button>
           <button
             type="button"

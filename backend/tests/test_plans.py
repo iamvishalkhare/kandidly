@@ -126,6 +126,8 @@ def test_difficulty_band_fixed():
 def _crit(key, weight):
     return {
         "key": key,
+        "name": f"Criterion {key}",
+        "description": f"Description for {key}",
         "weight": weight,
         "level_anchors": [{"level": i, "anchor": f"a{i}"} for i in range(1, 6)],
     }

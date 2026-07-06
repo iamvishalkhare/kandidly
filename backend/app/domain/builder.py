@@ -177,7 +177,7 @@ _GENERIC_ANCHORS = [
 ]
 
 
-def builder_rubric_to_criteria(items: list[dict]) -> list[dict]:
+def builder_rubric_to_criteria(items: list[dict], is_draft: bool = False) -> list[dict]:
     """Builder rubric rows → rubric_criteria dicts (validate_criteria shape).
 
     The builder collects name/description/weight only; level anchors are
@@ -188,7 +188,10 @@ def builder_rubric_to_criteria(items: list[dict]) -> list[dict]:
     for order, item in enumerate(items, start=1):
         name = (item.get("name") or "").strip()
         if not name:
-            raise AppError("validation_error", "rubric criterion name is required")
+            if is_draft:
+                name = f"Untitled Criterion {order}"
+            else:
+                raise AppError("validation_error", "rubric criterion name is required")
         criteria.append(
             {
                 "key": _unique_key(slugify(name, fallback="criterion"), used),

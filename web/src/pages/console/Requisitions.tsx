@@ -11,7 +11,7 @@ import ConsoleLayout from './ConsoleLayout';
 import { copyToClipboard, getInterviewUrl, type Requisition } from './requisitionData';
 import { useConsoleRequisitions, useToggleRequisitionStatus } from '../../lib/consoleApi';
 
-type StatusFilter = 'all' | 'live' | 'offline';
+type StatusFilter = 'all' | 'live' | 'offline' | 'draft';
 
 /* -------------------------------------------------------------------------- */
 /*  Requisition Card                                                          */
@@ -106,23 +106,30 @@ function ReqCard({
           >
             {copied ? <Check size={14} /> : <Copy size={14} />}
           </button>
-          <button
-            onClick={handleToggle}
-            className={cn(
-              'px-3 py-1 label-mono flex items-center gap-2 select-none transition-colors duration-200',
-              req.live
-                ? 'bg-primary-container text-on-primary-container'
-                : 'bg-surface-container-lowest text-on-surface-variant border border-outline-variant',
-            )}
-          >
-            <span
+          {req.status === 'draft' ? (
+            <div className="px-3 py-1 label-mono flex items-center gap-2 select-none border border-[var(--amber-chip-text)]/20 bg-[var(--amber-chip-bg)] text-[var(--amber-chip-text)]">
+              <span className="size-2 bg-[var(--amber-chip-text)]" />
+              DRAFT
+            </div>
+          ) : (
+            <button
+              onClick={handleToggle}
               className={cn(
-                'size-2',
-                req.live ? 'bg-[var(--emerald-chip-text)] blink' : 'bg-outline',
+                'px-3 py-1 label-mono flex items-center gap-2 select-none transition-colors duration-200',
+                req.live
+                  ? 'bg-primary-container text-on-primary-container'
+                  : 'bg-surface-container-lowest text-on-surface-variant border border-outline-variant',
               )}
-            />
-            {req.live ? 'LIVE' : 'OFFLINE'}
-          </button>
+            >
+              <span
+                className={cn(
+                  'size-2',
+                  req.live ? 'bg-[var(--emerald-chip-text)] blink' : 'bg-outline',
+                )}
+              />
+              {req.live ? 'LIVE' : 'OFFLINE'}
+            </button>
+          )}
         </div>
       </div>
 
@@ -280,8 +287,9 @@ export default function ConsoleRequisitions() {
       );
     const matchesStatus =
       statusFilter === 'all' ||
-      (statusFilter === 'live' && r.live) ||
-      (statusFilter === 'offline' && !r.live);
+      (statusFilter === 'live' && r.status === 'open') ||
+      (statusFilter === 'draft' && r.status === 'draft') ||
+      (statusFilter === 'offline' && r.status !== 'open' && r.status !== 'draft');
     const matchesTitle = titleFilter.length === 0 || r.title === titleFilter;
     const matchesDomain = domainFilter.length === 0 || r.domain === domainFilter;
     const matchesRequirements =
@@ -356,8 +364,8 @@ export default function ConsoleRequisitions() {
                 <div className="p-4 space-y-4">
                   <div>
                     <p className="label-mono text-on-surface-variant mb-2">Status</p>
-                    <div className="grid grid-cols-3 gap-px border border-outline-variant bg-outline-variant">
-                      {(['all', 'live', 'offline'] as const).map(status => (
+                    <div className="grid grid-cols-4 gap-px border border-outline-variant bg-outline-variant">
+                      {(['all', 'live', 'offline', 'draft'] as const).map(status => (
                         <button
                           key={status}
                           type="button"
@@ -369,7 +377,13 @@ export default function ConsoleRequisitions() {
                               : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface',
                           )}
                         >
-                          {status === 'all' ? 'All' : status === 'live' ? 'Live' : 'Offline'}
+                          {status === 'all'
+                            ? 'All'
+                            : status === 'live'
+                              ? 'Live'
+                              : status === 'offline'
+                                ? 'Offline'
+                                : 'Draft'}
                         </button>
                       ))}
                     </div>

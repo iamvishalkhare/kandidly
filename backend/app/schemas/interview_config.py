@@ -35,10 +35,6 @@ class InterviewConfig(BaseModel):
     tone: Literal["conversational", "friendly", "technical", "structured", "bar_raiser"] = (
         "conversational"
     )
-    # ISO date/datetime string after which the requisition's interview link is
-    # offline. Kept as a string so model_dump() stays JSONB-safe; the console
-    # API mirrors it into requisitions.closes_at, which link resolution gates on.
-    ends_at: str | None = None
     language: str = "en"
 
     @field_validator("max_duration_seconds")
@@ -55,20 +51,3 @@ class InterviewConfig(BaseModel):
         if isinstance(v, int) and 1 <= v <= 5:
             return v
         raise ValueError("difficulty_band must be 'auto' or an integer 1..5")
-
-    @field_validator("ends_at")
-    @classmethod
-    def _ends_at_iso(cls, v: str | None) -> str | None:
-        if v is None or not v.strip():
-            return None
-        from datetime import date, datetime
-
-        value = v.strip()
-        try:
-            if len(value) == 10:
-                date.fromisoformat(value)
-            else:
-                datetime.fromisoformat(value)
-        except ValueError as exc:
-            raise ValueError("ends_at must be an ISO date (YYYY-MM-DD) or datetime") from exc
-        return value

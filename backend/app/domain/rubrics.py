@@ -28,6 +28,11 @@ def validate_criteria(criteria: list[dict]) -> None:
 
     total = Decimal("0")
     for c in criteria:
+        if not str(c.get("name", "")).strip():
+            raise _fail("criterion name cannot be empty", key=c.get("key"))
+        if not str(c.get("description", "")).strip():
+            raise _fail("criterion description cannot be empty", key=c.get("key"))
+
         weight = Decimal(str(c["weight"]))
         if weight <= 0:
             raise _fail(f"criterion {c['key']!r} weight must be > 0", key=c["key"])

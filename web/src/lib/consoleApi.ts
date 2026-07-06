@@ -136,7 +136,7 @@ function formatDate(iso: string | null): string {
   if (!iso) return 'N/A';
   const d = new Date(iso);
   const pad = (n: number) => String(n).padStart(2, '0');
-  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 export function formatDuration(totalSeconds: number): string {
@@ -178,6 +178,7 @@ export function toRequisition(wire: ConsoleRequisitionWire): Requisition {
     clicks: wire.clicks,
     completed: wire.completed,
     live: wire.live,
+    status: wire.status,
   };
 }
 

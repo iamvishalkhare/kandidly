@@ -105,11 +105,15 @@ class ConsoleRequisitionIn(BaseModel):
     def _end_date_iso(cls, v: str | None) -> str | None:
         if v is None or not v.strip():
             return None
+        value = v.strip()
         try:
-            date.fromisoformat(v.strip())
+            if "T" in value or " " in value:
+                datetime.fromisoformat(value.replace(" ", "T"))
+            else:
+                date.fromisoformat(value)
         except ValueError as exc:
-            raise ValueError("end_date must be an ISO date (YYYY-MM-DD)") from exc
-        return v.strip()
+            raise ValueError("end_date must be an ISO date (YYYY-MM-DD) or datetime") from exc
+        return value
 
 
 class ConsoleRequisitionOut(BaseModel):
@@ -284,13 +288,19 @@ def _req_card(r: Requisition, clicks: dict, completed: dict, tokens: dict) -> Co
 
 
 def _closes_at_from(end_date: str | None) -> datetime | None:
-    """The link stays usable through the chosen end date (offline at the end
-    of that day, UTC)."""
+    """The link stays usable through the chosen end date/time (UTC)."""
     if not end_date:
         return None
-    return datetime.fromisoformat(end_date).replace(
-        hour=23, minute=59, second=59, tzinfo=UTC
-    )
+    value = end_date.strip()
+    if "T" in value or " " in value:
+        dt = datetime.fromisoformat(value.replace(" ", "T"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return dt
+    else:
+        return datetime.fromisoformat(value).replace(
+            hour=23, minute=59, second=59, tzinfo=UTC
+        )
 
 
 def _proctoring_config(enabled: bool) -> ProctoringConfig:
@@ -311,14 +321,27 @@ async def _upsert_catalog(db: AsyncSession, org_id, user: AuthUser, body: Consol
 
 async def _create_template_and_rubric(
     db: AsyncSession, org_id, user: AuthUser, body: ConsoleRequisitionIn, family: tuple | None
-) -> tuple[FormTemplate, Rubric]:
+) -> tuple[FormTemplate, Rubric, str]:
     """Create published template + rubric rows from builder payloads. `family`
     carries (template_family, template_version, rubric_family, rubric_version)
     when versioning an existing requisition's artifacts."""
     schema = builder_fields_to_schema([f.model_dump() for f in body.screening_fields])
-    validate_template(schema)
-    criteria = builder_rubric_to_criteria([c.model_dump() for c in body.rubric])
-    validate_criteria(criteria)
+    
+    is_valid = True
+    try:
+        validate_template(schema)
+        test_criteria = builder_rubric_to_criteria([c.model_dump() for c in body.rubric], is_draft=False)
+        validate_criteria(test_criteria)
+    except AppError:
+        is_valid = False
+
+    if body.deploy and not is_valid:
+        validate_template(schema)
+        test_criteria = builder_rubric_to_criteria([c.model_dump() for c in body.rubric], is_draft=False)
+        validate_criteria(test_criteria)
+
+    status = "published" if is_valid else "draft"
+    criteria = builder_rubric_to_criteria([c.model_dump() for c in body.rubric], is_draft=not is_valid)
 
     now = datetime.now(UTC)
     template = FormTemplate(
@@ -330,9 +353,9 @@ async def _create_template_and_rubric(
         title=f"{body.title} Screening Form",
         schema=schema,
         field_hints={"full_name": {"use_in_plan": False}},
-        status="published",
+        status=status,
         created_by=user.user_id,
-        published_at=now,
+        published_at=now if status == "published" else None,
     )
     db.add(template)
     rubric = Rubric(
@@ -342,15 +365,15 @@ async def _create_template_and_rubric(
         version=(family[3] + 1) if family else 1,
         interview_type="console_screen",
         title=f"{body.title} Rubric",
-        status="published",
+        status=status,
         created_by=user.user_id,
-        published_at=now,
+        published_at=now if status == "published" else None,
     )
     db.add(rubric)
     await db.flush()
     for c in criteria:
         db.add(RubricCriterion(id=new_id(), rubric_id=rubric.id, **c))
-    return template, rubric
+    return template, rubric, status
 
 
 # --------------------------------------------------------------------------- #
@@ -417,7 +440,7 @@ async def _detail_out(db: AsyncSession, r: Requisition) -> ConsoleRequisitionDet
         **card.model_dump(),
         objective=r.role_objective,
         tone=cfg.tone,
-        end_date=(cfg.ends_at or "")[:10] or None,
+        end_date=r.end_date.isoformat() if r.end_date else None,
         proctoring_enabled=cfg.proctoring.enabled,
         sample_questions=[BuilderQuestion(**q) for q in (r.sample_questions or [])],
         screening_fields=[
@@ -451,9 +474,15 @@ async def deploy_requisition(
     """Composite deploy: published template + rubric + requisition + open
     invite link in one transaction (the builder's Deploy / Save-as-Offline)."""
     org_id = await _org_id_for(db, user)
-    template, rubric = await _create_template_and_rubric(db, org_id, user, body, family=None)
+    template, rubric, artifact_status = await _create_template_and_rubric(db, org_id, user, body, family=None)
 
     seq = (await db.execute(sa_text("SELECT nextval('requisition_code_seq')"))).scalar_one()
+    
+    if body.deploy:
+        req_status = "open"
+    else:
+        req_status = "paused" if artifact_status == "published" else "draft"
+
     req = Requisition(
         id=new_id(),
         org_id=org_id,
@@ -466,15 +495,15 @@ async def deploy_requisition(
         sample_questions=[q.model_dump() for q in body.sample_questions],
         form_template_id=template.id,
         rubric_id=rubric.id,
-        status="open" if body.deploy else "draft",
+        status=req_status,
         interview_config=InterviewConfig(
             tone=body.tone,
-            ends_at=body.end_date,
             proctoring=_proctoring_config(body.proctoring_enabled),
         ).model_dump(),
         created_by=user.user_id,
         opens_at=datetime.now(UTC) if body.deploy else None,
         closes_at=_closes_at_from(body.end_date),
+        end_date=_closes_at_from(body.end_date),
     )
     db.add(req)
     await db.flush()
@@ -529,14 +558,19 @@ async def update_requisition(
     )
 
     new_schema = builder_fields_to_schema([f.model_dump() for f in body.screening_fields])
-    new_criteria = builder_rubric_to_criteria([c.model_dump() for c in body.rubric])
+    new_criteria = builder_rubric_to_criteria([c.model_dump() for c in body.rubric], is_draft=True)
     schema_changed = current_template is None or current_template.schema != new_schema
     rubric_changed = [(c.name, c.description, float(c.weight)) for c in current_criteria] != [
         (c["name"], c["description"], float(c["weight"])) for c in new_criteria
     ]
+    force_new_version = (
+        (current_template is not None and current_template.status == "draft") or
+        (current_rubric is not None and current_rubric.status == "draft")
+    )
 
-    if schema_changed or rubric_changed:
-        template, rubric = await _create_template_and_rubric(
+    artifact_status = None
+    if schema_changed or rubric_changed or force_new_version:
+        template, rubric, artifact_status = await _create_template_and_rubric(
             db,
             org_id,
             user,
@@ -560,14 +594,19 @@ async def update_requisition(
     req.interview_config = cfg.model_copy(
         update={
             "tone": body.tone,
-            "ends_at": body.end_date,
             "proctoring": _proctoring_config(body.proctoring_enabled),
         }
     ).model_dump()
     req.closes_at = _closes_at_from(body.end_date)
-    if body.deploy and req.status in ("draft", "paused"):
+    req.end_date = _closes_at_from(body.end_date)
+    if body.deploy:
         req.status = "open"
         req.opens_at = req.opens_at or datetime.now(UTC)
+    else:
+        if schema_changed or rubric_changed or force_new_version:
+            req.status = "paused" if artifact_status == "published" else "draft"
+        else:
+            req.status = "paused" if (current_template and current_template.status == "published") else "draft"
     req.updated_at = datetime.now(UTC)
 
     await _upsert_catalog(db, org_id, user, body)

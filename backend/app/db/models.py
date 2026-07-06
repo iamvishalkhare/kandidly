@@ -11,7 +11,7 @@ external-JWT contract (app.core.security).
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
     ARRAY,
@@ -19,6 +19,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     Index,
@@ -166,7 +167,7 @@ class RubricCriterion(Base):
     display_order: Mapped[int] = mapped_column(Integer, nullable=False)
     level_anchors: Mapped[list] = mapped_column(JSONB, nullable=False)
     __table_args__ = (
-        CheckConstraint("weight > 0", name="weight_positive"),
+        CheckConstraint("weight >= 0", name="weight_positive"),
         UniqueConstraint("rubric_id", "key", name="rubric_key"),
     )
 
@@ -209,6 +210,7 @@ class Requisition(Base):
     )
     opens_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     closes_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    end_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = _ts_created()
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

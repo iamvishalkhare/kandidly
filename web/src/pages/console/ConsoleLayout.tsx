@@ -33,7 +33,7 @@ export default function ConsoleLayout({ children }: { children: React.ReactNode 
   const location = useLocation();
 
   return (
-    <div className="flex min-h-screen bg-surface-container-lowest">
+    <div className="flex h-screen overflow-hidden bg-surface-container-lowest">
       {/* Sidebar */}
       <aside className="w-64 shrink-0 bg-surface-container-lowest border-r border-outline-variant flex flex-col">
         {/* Brand */}
