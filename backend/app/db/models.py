@@ -2,10 +2,10 @@
 normative (SPEC §0.5). Enum-likes are text + CHECK (SPEC D16). UUIDv7 PKs are
 generated in app code (see app.core.ids.new_id) — do not rely on DB defaults.
 
-NOTE (spec-gap): SPEC §3.6 states the `users` table already exists and is owned
-by the external auth system. It is defined here (and created by migration
-0000_users) purely so local/dev FKs resolve; production points these FKs at the
-real users table.
+NOTE: `users` and `organizations` are owned by THIS database (supersedes the
+SPEC §3.6 external-auth assumption). WorkOS integration later syncs into them
+via users.workos_user_id / organizations.workos_org_id; auth remains an
+external-JWT contract (app.core.security).
 """
 
 from __future__ import annotations
@@ -48,16 +48,38 @@ def _ts_created() -> Mapped[datetime]:
 
 
 # --------------------------------------------------------------------------- #
-# External auth (SPEC §3.6) — minimal shape for FK integrity.
+# Organizations & users (locally owned; WorkOS-synced later via workos_* ids)
 # --------------------------------------------------------------------------- #
+class Organization(Base):
+    __tablename__ = "organizations"
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    slug: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    workos_org_id: Mapped[str | None] = mapped_column(Text, unique=True)
+    settings: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=sa_text("'{}'::jsonb")
+    )
+    created_at: Mapped[datetime] = _ts_created()
+
+
 class User(Base):
     __tablename__ = "users"
     id: Mapped[uuid.UUID] = _uuid_pk()
     email: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     role: Mapped[str] = mapped_column(Text, nullable=False)
+    # org membership is for staff (admin/recruiter); candidates stay org-less.
+    org_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=True
+    )
+    display_name: Mapped[str | None] = mapped_column(Text)
+    avatar_url: Mapped[str | None] = mapped_column(Text)
+    workos_user_id: Mapped[str | None] = mapped_column(Text, unique=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=sa_text("'active'"))
     created_at: Mapped[datetime] = _ts_created()
     __table_args__ = (
         CheckConstraint("role IN ('admin','recruiter','candidate')", name="role_valid"),
+        CheckConstraint("status IN ('active','invited','suspended')", name="status_valid"),
+        Index("ix_users_org", "org_id"),
     )
 
 
@@ -83,6 +105,9 @@ class StoredFile(Base):
 class FormTemplate(Base):
     __tablename__ = "form_templates"
     id: Mapped[uuid.UUID] = _uuid_pk()
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False
+    )
     family_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     interview_type: Mapped[str] = mapped_column(Text, nullable=False)
@@ -101,12 +126,16 @@ class FormTemplate(Base):
         CheckConstraint("status IN ('draft','published','archived')", name="template_status_valid"),
         UniqueConstraint("family_id", "version", name="template_family_version"),
         Index("ix_form_templates_family", "family_id", desc("version")),
+        Index("ix_form_templates_org", "org_id"),
     )
 
 
 class Rubric(Base):
     __tablename__ = "rubrics"
     id: Mapped[uuid.UUID] = _uuid_pk()
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False
+    )
     family_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     interview_type: Mapped[str] = mapped_column(Text, nullable=False)
@@ -120,6 +149,7 @@ class Rubric(Base):
     __table_args__ = (
         CheckConstraint("status IN ('draft','published','archived')", name="rubric_status_valid"),
         UniqueConstraint("family_id", "version", name="rubric_family_version"),
+        Index("ix_rubrics_org", "org_id"),
     )
 
 
@@ -147,7 +177,22 @@ class RubricCriterion(Base):
 class Requisition(Base):
     __tablename__ = "requisitions"
     id: Mapped[uuid.UUID] = _uuid_pk()
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False
+    )
+    # Human-readable code (e.g. REQ-0001) — server-generated from
+    # requisition_code_seq, never client-supplied.
+    code: Mapped[str] = mapped_column(Text, nullable=False)
     title: Mapped[str] = mapped_column(Text, nullable=False)
+    domain: Mapped[str | None] = mapped_column(Text)
+    technical_requirements: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), nullable=False, server_default=sa_text("'{}'")
+    )
+    role_objective: Mapped[str | None] = mapped_column(Text)
+    # Ordered list of {"id","text"} — edited as a whole in the builder.
+    sample_questions: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default=sa_text("'[]'::jsonb")
+    )
     interview_type: Mapped[str] = mapped_column(Text, nullable=False)
     form_template_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("form_templates.id"), nullable=False
@@ -170,6 +215,10 @@ class Requisition(Base):
     )
     __table_args__ = (
         CheckConstraint("status IN ('draft','open','paused','closed')", name="status_valid"),
+        UniqueConstraint("org_id", "code", name="requisition_org_code"),
+        Index("ix_requisitions_org", "org_id"),
+        Index("ix_requisitions_domain", "domain"),
+        Index("ix_requisitions_skills", "technical_requirements", postgresql_using="gin"),
     )
 
 
@@ -187,6 +236,8 @@ class InviteLink(Base):
     email: Mapped[str | None] = mapped_column(Text)
     max_uses: Mapped[int | None] = mapped_column(Integer)
     use_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=sa_text("0"))
+    # Landing-page resolves of the link (use_count counts claims).
+    click_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=sa_text("0"))
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_by: Mapped[uuid.UUID] = mapped_column(
@@ -339,6 +390,9 @@ class Interview(Base):
     requisition_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("requisitions.id"), nullable=False
     )
+    # Human-readable code (e.g. INT-1001) from interview_code_seq; always set
+    # by app code at creation, nullable only for DDL simplicity.
+    code: Mapped[str | None] = mapped_column(Text, unique=True)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default=sa_text("'created'"))
     room_name: Mapped[str | None] = mapped_column(Text, unique=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -350,6 +404,9 @@ class Interview(Base):
     audio_recording_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("stored_files.id"), nullable=True
     )
+    # Precomputed player peaks: {"version":1,"peaks":[0..100 ints],"bins":N,
+    # "duration_seconds":N}. The recording itself lives in S3.
+    audio_waveform: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = _ts_created()
     __table_args__ = (
         CheckConstraint(
@@ -543,7 +600,16 @@ class ProctoringSnapshot(Base):
         JSONB, nullable=False, server_default=sa_text("'{}'::jsonb")
     )
     analyzed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=sa_text("false"))
-    __table_args__ = (Index("ix_snapshots_interview", "interview_id", "captured_at"),)
+    # Analysis verdict shown on the review page; set by the snapshot-analysis
+    # job (or seed), not derived at read time.
+    signal: Mapped[str | None] = mapped_column(Text)
+    __table_args__ = (
+        CheckConstraint(
+            "signal IN ('clear','attention_shift','low_light','no_face','multiple_faces')",
+            name="signal_valid",
+        ),
+        Index("ix_snapshots_interview", "interview_id", "captured_at"),
+    )
 
 
 class IdentityCheck(Base):
@@ -624,7 +690,9 @@ class Evaluation(Base):
         UUID(as_uuid=True), ForeignKey("interviews.id"), nullable=False
     )
     criterion_key: Mapped[str] = mapped_column(Text, nullable=False)
-    final_score: Mapped[float] = mapped_column(Numeric(3, 1), nullable=False)
+    # 0–100 scale; LLM runs score 1–5 anchors (criterion_scores) and are
+    # converted at aggregation (app.domain.scoring.anchor_to_score100).
+    final_score: Mapped[float] = mapped_column(Numeric(5, 2), nullable=False)
     method: Mapped[str] = mapped_column(Text, nullable=False, server_default=sa_text("'median'"))
     disagreement: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=sa_text("false")
@@ -635,6 +703,7 @@ class Evaluation(Base):
     evidence: Mapped[list] = mapped_column(JSONB, nullable=False)
     rationale: Mapped[str] = mapped_column(Text, nullable=False)
     __table_args__ = (
+        CheckConstraint("final_score BETWEEN 0 AND 100", name="final_score_range"),
         UniqueConstraint("interview_id", "criterion_key", name="interview_criterion"),
     )
 
@@ -645,7 +714,7 @@ class Report(Base):
     interview_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("interviews.id"), nullable=False, unique=True
     )
-    overall_score: Mapped[float] = mapped_column(Numeric(4, 2), nullable=False)
+    overall_score: Mapped[float] = mapped_column(Numeric(5, 2), nullable=False)  # 0–100
     summary: Mapped[str] = mapped_column(Text, nullable=False)
     strengths: Mapped[list] = mapped_column(JSONB, nullable=False)
     concerns: Mapped[list] = mapped_column(JSONB, nullable=False)
@@ -662,7 +731,13 @@ class Report(Base):
         UUID(as_uuid=True), ForeignKey("stored_files.id"), nullable=True
     )
     created_at: Mapped[datetime] = _ts_created()
-    __table_args__ = (CheckConstraint("status IN ('draft','final')", name="status_valid"),)
+    __table_args__ = (
+        CheckConstraint("status IN ('draft','final')", name="status_valid"),
+        CheckConstraint("overall_score BETWEEN 0 AND 100", name="overall_score_range"),
+        CheckConstraint(
+            "review_decision IN ('shortlist','reject','hold')", name="review_decision_valid"
+        ),
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -679,3 +754,28 @@ class AuditLog(Base):
     entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=True)
     meta: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=sa_text("'{}'::jsonb"))
     created_at: Mapped[datetime] = _ts_created()
+    __table_args__ = (Index("ix_audit_entity", "entity_type", "entity_id", "created_at"),)
+
+
+# --------------------------------------------------------------------------- #
+# Catalog entries — autocomplete sources for the requisition builder
+# (domains / skills / job titles). Values on requisitions stay denormalized
+# strings; catalog rows are suggestions, not FK targets.
+# --------------------------------------------------------------------------- #
+class CatalogEntry(Base):
+    __tablename__ = "catalog_entries"
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    org_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = _ts_created()
+    __table_args__ = (
+        CheckConstraint("kind IN ('domain','skill','job_title')", name="kind_valid"),
+        UniqueConstraint("org_id", "kind", "value", name="org_kind_value"),
+        Index("ix_catalog_org_kind", "org_id", "kind"),
+    )

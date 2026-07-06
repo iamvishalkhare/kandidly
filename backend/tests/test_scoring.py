@@ -5,6 +5,7 @@ from __future__ import annotations
 from app.domain.scoring import (
     RunScore,
     aggregate_runs,
+    anchor_to_score100,
     filter_evidence,
     normalize_ws,
     verify_quote,
@@ -89,3 +90,18 @@ def test_coverage_gap_forces_review():
 
 def test_normalize_ws():
     assert normalize_ws("  a\n b\t c ") == "a b c"
+
+
+class TestAnchorToScore100:
+    """Linear 1–5 → 0–100 map used at the aggregation persistence boundary."""
+
+    def test_boundaries(self):
+        assert anchor_to_score100(1.0) == 0.0
+        assert anchor_to_score100(3.0) == 50.0
+        assert anchor_to_score100(5.0) == 100.0
+
+    def test_half_step(self):
+        assert anchor_to_score100(3.5) == 62.5
+
+    def test_rounding_two_decimals(self):
+        assert anchor_to_score100(2.333) == 33.33

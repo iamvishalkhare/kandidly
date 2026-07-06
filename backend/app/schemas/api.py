@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -114,11 +115,20 @@ class RubricOut(BaseModel):
 
 
 # --- admin: requisitions & links -------------------------------------------
+class SampleQuestion(BaseModel):
+    id: str
+    text: str
+
+
 class RequisitionCreate(BaseModel):
     title: str
     interview_type: str
     form_template_id: UUID
     rubric_id: UUID
+    domain: str | None = None
+    technical_requirements: list[str] = []
+    role_objective: str | None = None
+    sample_questions: list[SampleQuestion] = []
     interview_config: InterviewConfig | None = None
     opens_at: datetime | None = None
     closes_at: datetime | None = None
@@ -126,8 +136,13 @@ class RequisitionCreate(BaseModel):
 
 class RequisitionOut(BaseModel):
     id: UUID
+    code: str
     title: str
     interview_type: str
+    domain: str | None = None
+    technical_requirements: list[str] = []
+    role_objective: str | None = None
+    sample_questions: list[SampleQuestion] = []
     form_template_id: UUID
     rubric_id: UUID
     status: str
@@ -220,7 +235,7 @@ class ReportOut(BaseModel):
 
 
 class ReportReviewIn(BaseModel):
-    decision: str
+    decision: Literal["shortlist", "reject", "hold"]
     notes: str | None = None
 
 

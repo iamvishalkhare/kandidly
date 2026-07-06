@@ -9,6 +9,17 @@ from statistics import median
 
 _WS = re.compile(r"\s+")
 
+# LLM runs score on the 1–5 rubric anchor scale (criterion_scores.score);
+# stored evaluations/reports use 0–100. Conversion happens once, at the
+# aggregation persistence boundary.
+ANCHOR_MIN = 1
+ANCHOR_MAX = 5
+
+
+def anchor_to_score100(x: float) -> float:
+    """Linear map from the 1–5 anchor scale to 0–100 (1→0, 3→50, 5→100)."""
+    return round((x - ANCHOR_MIN) / (ANCHOR_MAX - ANCHOR_MIN) * 100.0, 2)
+
 
 def normalize_ws(text: str) -> str:
     return _WS.sub(" ", text).strip()

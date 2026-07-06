@@ -1,6 +1,6 @@
 # Kandidly — Build Status
 
-Last updated: 2026-07-05 (evening session). Tracks progress against SPEC §19 + phase gates.
+Last updated: 2026-07-06 (schema evolution for console UI). Tracks progress against SPEC §19 + phase gates.
 
 ## Working right now (verified against the running Podman stack)
 - **Backend**: 42 endpoints, all returning the SPEC §12 error envelope on failure. 211 unit tests green (`uv run pytest` in `backend/`; 27 more in `agent/`).
@@ -15,6 +15,7 @@ Last updated: 2026-07-05 (evening session). Tracks progress against SPEC §19 + 
 - `KANDIDLY_LIVEKIT_*` (+ Deepgram/Cartesia keys) → voice interviews (Phase 2 wiring still pending).
 
 ## Session log
+- **2026-07-06 (schema for console UI)**: migration `0001` frozen into explicit DDL (verified pg_dump-identical; the `use_alter` FK cycle constraints must be added via `op.create_foreign_key` — metadata autogenerate silently drops them). New migration `0003_orgs_console`: `organizations` (+ default org, `workos_org_id`) and `catalog_entries` tables; `org_id` FKs on users/requisitions/templates/rubrics; users `display_name/avatar_url/workos_user_id/status` (WorkOS-ready, users now owned by our DB); requisitions `code` (REQ-#### from sequence) `/domain/technical_requirements[]/role_objective/sample_questions`; interviews `code` (INT-1001+ from sequence) + `audio_waveform` JSONB peaks; `invite_links.click_count` (incremented on `/i/{token}` resolve); `proctoring_snapshots.signal`; `reports.review_decision` CHECK (`shortlist|reject|hold`, Literal in API); **scores rescaled to 0–100** (`evaluations.final_score`, `reports.overall_score`; LLM runs stay 1–5 anchors, converted via `anchor_to_score100` at aggregation; `v_score_distribution` recreated with decile buckets). `InterviewConfig.tone` added. New storage key builders `recording_key`/`report_key`. Rich seed: 6 requisitions across domains + 6 finished interview pipelines on ENG-001 (turns, criterion scores, evaluations, reviewed reports, proctor snapshots w/ signals, generated WAV recordings + peaks in MinIO); idempotent per candidate. **Bug fixed**: `record_audit` passed a UUID into BIGSERIAL `audit_log.id` → every audited admin write rolled back after the 200 was sent (asyncpg int64 bind error); review decisions now persist. 247 backend tests green; ruff clean. Console `/console` pages still render frontend mocks by design — console APIs are the next step.
 - **2026-07-05 (early)**: foundation T01–T11 built + verified (see git history once committed).
 - **2026-07-05 (Gemini)**: uv workspace, partial web app, admin read endpoints, `reports.review_decision/notes` columns. Bugs fixed afterwards: `User.name` (×2), wrong `transition()` signature, missing `report.status='final'`.
 - **2026-07-05 (evening)**: fixed all 500s (incl. flush-ordering bug on resume upload — models use raw FK columns, so inserts must be flushed before rows referencing them), catch-all error envelope, dev-users endpoint, proctoring domain + ingest routes (§10.2–10.3, consent-gated), text-chat harness + chat UI, full dark UI rebuild (Sonnet agent), provider-key env bridge with friendly 503.
@@ -34,8 +35,9 @@ Last updated: 2026-07-05 (evening session). Tracks progress against SPEC §19 + 
 - Admin "Interview (Text)" chat tab wired to the harness; web build+lint clean.
 
 ## Known deviations / notes
-- `reports.review_decision`/`review_notes` are schema additions beyond SPEC §7 (Gemini; kept — useful).
-- Migration `0001` emits DDL from live model metadata: model changes silently change what a fresh migrate creates. Fine for dev; **freeze into explicit DDL before first shared/prod deploy.**
+- `reports.review_decision`/`review_notes` are schema additions beyond SPEC §7 (Gemini; kept — useful). 0003 adds a CHECK + API Literal on decision.
+- Migration `0001` is now frozen explicit DDL (2026-07-06); schema changes require a new migration.
+- 0003 additions (organizations, catalog_entries, codes, 0–100 scores, etc.) supersede SPEC §7 in the touched areas; SPEC §3.6's "users owned by external auth" is obsolete — users/organizations live in our DB, WorkOS syncs into them.
 - Web stack is React 19/Vite 8 (spec said React 18) — kept, no reason to downgrade.
 - `GET /api/admin/funnel` is global; spec wants per-requisition `/requisitions/{id}/funnel`.
 - Pydantic warning: field `schema` shadows BaseModel attr (name normative; harmless).

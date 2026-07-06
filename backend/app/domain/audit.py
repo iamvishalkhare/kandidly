@@ -7,7 +7,6 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.ids import new_id
 from app.db.models import AuditLog
 
 
@@ -20,9 +19,11 @@ async def record_audit(
     entity_id: UUID | None,
     meta: dict | None = None,
 ) -> None:
+    # audit_log.id is a BIGSERIAL — let the database assign it (a UUID here
+    # fails asyncpg's int64 bind at commit time, silently rolling back the
+    # whole request's writes after the 200 has been sent).
     session.add(
         AuditLog(
-            id=new_id(),
             actor_id=actor_id,
             action=action,
             entity_type=entity_type,

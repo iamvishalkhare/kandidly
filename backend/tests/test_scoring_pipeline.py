@@ -449,36 +449,36 @@ class TestReportFallback:
 
     def test_fallback_returns_report_draft(self):
         """_fallback_report_draft returns a ReportDraft instance."""
-        draft = _fallback_report_draft(self._evals([3.0, 4.0]), overall_score=3.50)
+        draft = _fallback_report_draft(self._evals([50.0, 75.0]), overall_score=62.50)
         assert isinstance(draft, ReportDraft)
 
     def test_fallback_summary_contains_overall_score(self):
-        draft = _fallback_report_draft(self._evals([3.0, 4.0]), overall_score=3.50)
-        assert "3.50" in draft.summary
+        draft = _fallback_report_draft(self._evals([50.0, 75.0]), overall_score=62.50)
+        assert "62.50" in draft.summary
 
     def test_fallback_strengths_from_high_scores(self):
-        """Criteria scoring ≥4.0 appear in strengths."""
-        evals = self._evals([4.5, 2.0, 3.0])
-        draft = _fallback_report_draft(evals, overall_score=3.16)
+        """Criteria scoring >=75 (0-100 scale) appear in strengths."""
+        evals = self._evals([87.5, 25.0, 50.0])
+        draft = _fallback_report_draft(evals, overall_score=54.17)
         assert any("c0" in s for s in draft.strengths)
 
     def test_fallback_concerns_from_low_scores(self):
-        """Criteria scoring ≤2.0 appear in concerns."""
-        evals = self._evals([4.5, 1.5, 3.0])
-        draft = _fallback_report_draft(evals, overall_score=3.0)
+        """Criteria scoring <=25 (0-100 scale) appear in concerns."""
+        evals = self._evals([87.5, 12.5, 50.0])
+        draft = _fallback_report_draft(evals, overall_score=50.0)
         assert any("c1" in s for s in draft.concerns)
 
     def test_abandoned_interview_prepends_caveat(self):
         """Abandoned interviews get the SPEC §11.1/E5 caveat prepended."""
         draft = _fallback_report_draft(
-            self._evals([3.0]), overall_score=3.0, end_reason="abandoned"
+            self._evals([50.0]), overall_score=50.0, end_reason="abandoned"
         )
         assert draft.summary.startswith("Note: interview was not completed; coverage is partial.")
 
     def test_normal_interview_no_caveat(self):
         """Non-abandoned interviews do NOT get the caveat."""
         draft = _fallback_report_draft(
-            self._evals([3.0]), overall_score=3.0, end_reason="completed"
+            self._evals([50.0]), overall_score=50.0, end_reason="completed"
         )
         assert "coverage is partial" not in draft.summary
 

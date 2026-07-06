@@ -9,6 +9,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy import func, select
+from sqlalchemy import text as sa_text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -19,12 +21,14 @@ from app.core.ratelimit import rate_limit
 from app.core.security import AuthUser
 from app.db.models import (
     Application,
+    CatalogEntry,
     Evaluation,
     FormSubmission,
     FormTemplate,
     Injection,
     Interview,
     InviteLink,
+    Organization,
     Report,
     Requisition,
     Rubric,
@@ -64,6 +68,39 @@ router = APIRouter(prefix="/api/admin", tags=["admin"])
 _admin = Depends(require_role("admin", "recruiter"))
 
 
+async def _org_id_for(db: AsyncSession, user: AuthUser):
+    """Creator's org, falling back to the default org (dev tokens and rows
+    predating WorkOS org sync may lack a membership)."""
+    row = await db.get(User, user.user_id)
+    if row is not None and row.org_id is not None:
+        return row.org_id
+    org_id = (
+        await db.execute(
+            select(Organization.id).where(Organization.slug == settings.default_org_slug)
+        )
+    ).scalar_one_or_none()
+    if org_id is None:
+        raise AppError("internal_error", "No organization configured")
+    return org_id
+
+
+async def _upsert_catalog(
+    db: AsyncSession, org_id, user: AuthUser, entries: list[tuple[str, str]]
+) -> None:
+    """Record builder-entered domain/skill/job-title values as autocomplete
+    suggestions; duplicates are ignored."""
+    values = [
+        {"id": new_id(), "org_id": org_id, "kind": kind, "value": value, "created_by": user.user_id}
+        for kind, value in entries
+        if value and value.strip()
+    ]
+    if not values:
+        return
+    await db.execute(
+        pg_insert(CatalogEntry).values(values).on_conflict_do_nothing(constraint="org_kind_value")
+    )
+
+
 def _template_out(t: FormTemplate) -> FormTemplateOut:
     return FormTemplateOut(
         id=t.id,
@@ -88,6 +125,7 @@ async def create_form_template(
     validate_field_hints(body.schema, body.field_hints)
     t = FormTemplate(
         id=new_id(),
+        org_id=await _org_id_for(db, user),
         family_id=new_id(),
         version=1,
         interview_type=body.interview_type,
@@ -126,6 +164,7 @@ async def new_template_version(
         raise AppError("not_found", "Template family not found")
     t = FormTemplate(
         id=new_id(),
+        org_id=await _org_id_for(db, user),
         family_id=family_id,
         version=latest + 1,
         interview_type=body.interview_type,
@@ -213,6 +252,7 @@ async def create_rubric(
 ) -> RubricOut:
     r = Rubric(
         id=new_id(),
+        org_id=await _org_id_for(db, user),
         family_id=new_id(),
         version=1,
         interview_type=body.interview_type,
@@ -278,8 +318,13 @@ async def list_rubrics(
 def _req_out(r: Requisition) -> RequisitionOut:
     return RequisitionOut(
         id=r.id,
+        code=r.code,
         title=r.title,
         interview_type=r.interview_type,
+        domain=r.domain,
+        technical_requirements=list(r.technical_requirements or []),
+        role_objective=r.role_objective,
+        sample_questions=list(r.sample_questions or []),
         form_template_id=r.form_template_id,
         rubric_id=r.rubric_id,
         status=r.status,
@@ -294,10 +339,18 @@ async def create_requisition(
     body: RequisitionCreate, user: AuthUser = _admin, db: AsyncSession = Depends(get_db)
 ) -> RequisitionOut:
     cfg = (body.interview_config or InterviewConfig()).model_dump()
+    org_id = await _org_id_for(db, user)
+    seq = (await db.execute(sa_text("SELECT nextval('requisition_code_seq')"))).scalar_one()
     r = Requisition(
         id=new_id(),
+        org_id=org_id,
+        code=f"REQ-{seq:04d}",
         title=body.title,
         interview_type=body.interview_type,
+        domain=body.domain,
+        technical_requirements=list(body.technical_requirements),
+        role_objective=body.role_objective,
+        sample_questions=[q.model_dump() for q in body.sample_questions],
         form_template_id=body.form_template_id,
         rubric_id=body.rubric_id,
         status="draft",
@@ -307,6 +360,13 @@ async def create_requisition(
         closes_at=body.closes_at,
     )
     db.add(r)
+    await _upsert_catalog(
+        db,
+        org_id,
+        user,
+        [("domain", body.domain or ""), ("job_title", body.title)]
+        + [("skill", s) for s in body.technical_requirements],
+    )
     await record_audit(
         db,
         actor_id=user.user_id,

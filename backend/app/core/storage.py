@@ -69,3 +69,11 @@ def snapshot_key(interview_id: UUID, epoch_ms: int) -> str:
 
 def selfie_key(application_id: UUID) -> str:
     return f"{application_id}/reference.webp"
+
+
+def recording_key(interview_id: UUID, ext: str = "ogg") -> str:
+    return f"{interview_id}/audio.{ext.lstrip('.')}"
+
+
+def report_key(interview_id: UUID) -> str:
+    return f"{interview_id}/report.html"

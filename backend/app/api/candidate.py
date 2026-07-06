@@ -9,6 +9,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 from sqlalchemy import select
+from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import storage
@@ -27,6 +28,7 @@ from app.db.models import (
     InviteLink,
     Requisition,
     StoredFile,
+    User,
 )
 from app.domain import applications as apps
 from app.domain.forms import validate_submission
@@ -203,11 +205,20 @@ async def submit_form(
 
     submission.submitted_at = datetime.now(UTC)
 
+    # Surface the candidate's name for admin views once the form is in.
+    full_name = (submission.answers or {}).get("full_name")
+    if full_name and isinstance(full_name, str):
+        candidate = await db.get(User, user.user_id)
+        if candidate is not None and candidate.display_name is None:
+            candidate.display_name = full_name.strip()
+
     # Create the interview row (status 'created', room name) — SPEC §8.2.
+    seq = (await db.execute(sa_text("SELECT nextval('interview_code_seq')"))).scalar_one()
     interview = Interview(
         id=new_id(),
         application_id=app.id,
         requisition_id=app.requisition_id,
+        code=f"INT-{seq}",
         status="created",
     )
     interview.room_name = f"kndl-{interview.id}"

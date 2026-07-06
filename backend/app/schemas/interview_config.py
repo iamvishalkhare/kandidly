@@ -32,6 +32,9 @@ class InterviewConfig(BaseModel):
     proctoring: ProctoringConfig = Field(default_factory=ProctoringConfig)
     observer_allowed: bool = True
     difficulty_band: Literal["auto"] | int = DIFFICULTY_AUTO  # type: ignore
+    tone: Literal["conversational", "friendly", "technical", "structured", "bar_raiser"] = (
+        "conversational"
+    )
     language: str = "en"
 
     @field_validator("max_duration_seconds")

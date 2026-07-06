@@ -42,7 +42,7 @@ from app.db.models import (
 from app.db.session import SessionLocal
 from app.domain import applications as apps
 from app.domain.evidence import EvidencePacket, build_evidence_packet
-from app.domain.scoring import RunScore, aggregate_runs, filter_evidence
+from app.domain.scoring import RunScore, aggregate_runs, anchor_to_score100, filter_evidence
 from app.llm.clients import ensure_provider_env, report_writer
 from app.llm.prompts import load_prompt, version_tag
 from app.llm.schemas import CriterionScoreOut, ReportDraft
@@ -105,14 +105,14 @@ def _fallback_report_draft(
         "Report generated without LLM assistance."
     )
     strengths = [
-        f"{e['criterion_key']}: score {e['final_score']:.1f}"
+        f"{e['criterion_key']}: score {e['final_score']:.0f}"
         for e in by_score
-        if e["final_score"] >= 4.0
+        if e["final_score"] >= 75.0
     ]
     concerns = [
-        f"{e['criterion_key']}: score {e['final_score']:.1f}"
+        f"{e['criterion_key']}: score {e['final_score']:.0f}"
         for e in by_score
-        if e["final_score"] <= 2.0
+        if e["final_score"] <= 25.0
     ]
     return ReportDraft(summary=summary, strengths=strengths, concerns=concerns)
 
@@ -583,7 +583,7 @@ async def aggregate_scores(ctx: dict, scoring_job_id: str) -> None:
                     id=new_id(),
                     interview_id=sj.interview_id,
                     criterion_key=ckey,
-                    final_score=1.0,
+                    final_score=0.0,
                     method="median",
                     disagreement=False,
                     needs_review=True,
@@ -594,7 +594,7 @@ async def aggregate_scores(ctx: dict, scoring_job_id: str) -> None:
                 evaluations_data.append(
                     {
                         "criterion_key": ckey,
-                        "final_score": 1.0,
+                        "final_score": 0.0,
                         "needs_review": True,
                         "rationale": "scoring failed",
                         "evidence": [],
@@ -617,12 +617,15 @@ async def aggregate_scores(ctx: dict, scoring_job_id: str) -> None:
                 filter_evidence(rs, turn_text_by_id)
 
             agg = aggregate_runs(run_scores, coverage_gap=coverage_gap)
+            # Aggregation stays anchor-space (disagreement math is 1–5 native);
+            # persist and report on the 0–100 scale.
+            final_score100 = anchor_to_score100(agg.final_score)
 
             ev = Evaluation(
                 id=new_id(),
                 interview_id=sj.interview_id,
                 criterion_key=ckey,
-                final_score=agg.final_score,
+                final_score=final_score100,
                 method=agg.method,
                 disagreement=agg.disagreement,
                 needs_review=agg.needs_review,
@@ -633,7 +636,7 @@ async def aggregate_scores(ctx: dict, scoring_job_id: str) -> None:
             evaluations_data.append(
                 {
                     "criterion_key": ckey,
-                    "final_score": agg.final_score,
+                    "final_score": final_score100,
                     "disagreement": agg.disagreement,
                     "needs_review": agg.needs_review,
                     "rationale": agg.rationale,

@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     jwt_alg: str = "RS256"
     auth_dev_mode: bool = False
 
+    # tenancy — slug of the org that new staff/content falls back to until
+    # WorkOS org sync lands (must match the org seeded by migration 0003)
+    default_org_slug: str = "kandidly"
+
     # internal service auth (SPEC §12.4)
     service_token: str = "dev-service-token-change-me"
 

@@ -61,6 +61,8 @@ async def resolve_link(token: str, db: AsyncSession = Depends(get_db)) -> LinkRe
     requisition = None
     if link is not None:
         requisition = await db.get(Requisition, link.requisition_id)
+        # Landing-page views; use_count counts claims (registrations).
+        link.click_count = (link.click_count or 0) + 1
 
     res = resolve(link, requisition)
     return LinkResolveOut(
