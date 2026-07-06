@@ -792,12 +792,12 @@ function BuilderForm({
                   LIVE
 
                   {/* Tooltip Overlay */}
-                  <div className="absolute top-full right-0 mt-3 hidden group-hover:block bg-surface-container-high border border-outline-variant text-on-surface text-body-md rounded-lg p-3.5 shadow-lg z-50 w-80 pointer-events-none normal-case tracking-normal">
-                    <p className="font-semibold text-body-lg text-primary-fixed-dim flex items-center gap-1.5 mb-1">
-                      <Check size={16} />
+                  <div className="absolute top-full right-0 mt-3 hidden group-hover:block bg-surface-container-high border border-outline-variant text-on-surface text-sm rounded-lg p-3 shadow-lg z-50 w-80 pointer-events-none normal-case tracking-normal">
+                    <p className="font-semibold text-body-md text-primary-fixed-dim flex items-center gap-1.5 mb-1">
+                      <Check size={14} />
                       Live State
                     </p>
-                    <p className="text-on-surface-variant text-body-md">
+                    <p className="text-on-surface-variant text-sm">
                       Requisition is Live. Users should be able to land on interview page and attempt the interview.
                     </p>
                     {/* Arrow */}
@@ -813,22 +813,22 @@ function BuilderForm({
                   DRAFT
 
                   {/* Tooltip Overlay */}
-                  <div className="absolute top-full right-0 mt-3 hidden group-hover:block bg-surface-container-high border border-outline-variant text-on-surface text-body-md rounded-lg p-3.5 shadow-lg z-50 w-80 pointer-events-none normal-case tracking-normal">
+                  <div className="absolute top-full right-0 mt-3 hidden group-hover:block bg-surface-container-high border border-outline-variant text-on-surface text-sm rounded-lg p-3 shadow-lg z-50 w-80 pointer-events-none normal-case tracking-normal">
                     {errors.length > 0 ? (
                       <>
-                        <p className="font-semibold text-body-lg mb-2 text-error flex items-center gap-1.5">
-                          <AlertTriangle size={16} />
+                        <p className="font-semibold text-body-md mb-2 text-error flex items-center gap-1.5">
+                          <AlertTriangle size={14} />
                           Necessary steps to publish:
                         </p>
-                        <ul className="list-disc pl-4 space-y-1.5 text-on-surface-variant text-body-md">
+                        <ul className="list-disc pl-4 space-y-1.5 text-on-surface-variant text-sm">
                           {errors.map((err, i) => (
                             <li key={i}>{err}</li>
                           ))}
                         </ul>
                       </>
                     ) : (
-                      <p className="font-semibold text-body-lg text-primary-fixed-dim flex items-center gap-1.5">
-                        <Check size={16} />
+                      <p className="font-semibold text-body-md text-primary-fixed-dim flex items-center gap-1.5">
+                        <Check size={14} />
                         All checks passed. Ready to deploy!
                       </p>
                     )}
@@ -845,12 +845,12 @@ function BuilderForm({
                   OFFLINE
 
                   {/* Tooltip Overlay */}
-                  <div className="absolute top-full right-0 mt-3 hidden group-hover:block bg-surface-container-high border border-outline-variant text-on-surface text-body-md rounded-lg p-3.5 shadow-lg z-50 w-80 pointer-events-none normal-case tracking-normal">
-                    <p className="font-semibold text-body-lg text-on-surface flex items-center gap-1.5 mb-1">
+                  <div className="absolute top-full right-0 mt-3 hidden group-hover:block bg-surface-container-high border border-outline-variant text-on-surface text-sm rounded-lg p-3 shadow-lg z-50 w-80 pointer-events-none normal-case tracking-normal">
+                    <p className="font-semibold text-body-md text-on-surface flex items-center gap-1.5 mb-1">
                       <span className="size-2 bg-outline rounded-full" />
                       Offline State
                     </p>
-                    <p className="text-on-surface-variant text-body-md">
+                    <p className="text-on-surface-variant text-sm">
                       Requisition is ready to be made Live.
                     </p>
                     {/* Arrow */}
@@ -1156,7 +1156,7 @@ function BuilderForm({
                 )}
                 style={{
                   backgroundColor: '#f8f9fa',
-                  backgroundImage: 'linear-gradient(rgba(0, 0, 0, 0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(0, 0, 0, 0.04) 1px, transparent 1px)',
+                  backgroundImage: 'linear-gradient(rgba(0, 0, 0, 0.12) 1px, transparent 1px), linear-gradient(90deg, rgba(0, 0, 0, 0.12) 1px, transparent 1px)',
                   backgroundSize: '20px 20px',
                 }}
                 onDragOver={e => {
@@ -1179,8 +1179,10 @@ function BuilderForm({
                   {fields.length === 0 && (
                     <div
                       className={cn(
-                        'label-mono text-on-surface-variant text-center border border-dashed p-8 my-auto transition-colors duration-150',
-                        dragging ? 'border-primary-container text-primary-fixed-dim' : 'border-outline-variant',
+                        'label-mono text-center border border-dashed p-8 my-auto transition-colors duration-150',
+                        dragging 
+                          ? 'border-primary-container text-primary-container' 
+                          : 'border-outline-variant text-neutral-600',
                       )}
                     >
                       Drag a form element here to start building
@@ -1437,12 +1439,12 @@ function BuilderForm({
               </span>
               
               {/* Tooltip */}
-              <div className="absolute bottom-full left-0 mb-3 hidden group-hover:block bg-surface-container-high border border-outline-variant text-on-surface text-body-md rounded-lg p-3.5 shadow-lg z-50 w-80 pointer-events-none">
-                <p className="font-semibold text-body-lg mb-2 text-error flex items-center gap-1.5">
-                  <AlertTriangle size={16} />
+              <div className="absolute bottom-full left-0 mb-3 hidden group-hover:block bg-surface-container-high border border-outline-variant text-on-surface text-sm rounded-lg p-3 shadow-lg z-50 w-80 pointer-events-none">
+                <p className="font-semibold text-body-md mb-2 text-error flex items-center gap-1.5">
+                  <AlertTriangle size={14} />
                   Necessary steps to publish:
                 </p>
-                <ul className="list-disc pl-4 space-y-1.5 text-on-surface-variant text-body-md">
+                <ul className="list-disc pl-4 space-y-1.5 text-on-surface-variant text-sm">
                   {errors.map((err, i) => (
                     <li key={i}>{err}</li>
                   ))}
