@@ -473,6 +473,8 @@ async def deploy_requisition(
 ) -> ConsoleRequisitionDetailOut:
     """Composite deploy: published template + rubric + requisition + open
     invite link in one transaction (the builder's Deploy / Save-as-Offline)."""
+    import asyncio
+    await asyncio.sleep(3)
     org_id = await _org_id_for(db, user)
     template, rubric, artifact_status = await _create_template_and_rubric(db, org_id, user, body, family=None)
 
@@ -538,6 +540,8 @@ async def update_requisition(
     """Builder save on an existing requisition. Templates/rubrics are
     immutable versions: changed screening fields or rubric produce a new
     published version and repoint the requisition."""
+    import asyncio
+    await asyncio.sleep(3)
     req = await db.get(Requisition, req_id)
     if req is None:
         raise AppError("not_found", "Requisition not found")
