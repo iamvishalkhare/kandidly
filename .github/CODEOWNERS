@@ -1,0 +1,4 @@
+# See https://docs.github.com/articles/about-codeowners
+# Last matching pattern wins, so this catch-all covers everything not
+# claimed by a more specific rule below.
+* @iamvishalkhare
