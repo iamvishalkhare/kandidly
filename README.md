@@ -1,5 +1,7 @@
 # Kandidly
 
+[![CodeQL Advanced](https://github.com/iamvishalkhare/kandidly/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/iamvishalkhare/kandidly/actions/workflows/codeql.yml)
+
 AI voice interviewer for candidate screening. Requisition → KYI form → live voice
 interview with Kandidly → rubric-scored, evidence-backed report.
 
