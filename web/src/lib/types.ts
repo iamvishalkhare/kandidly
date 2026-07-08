@@ -7,6 +7,7 @@ export interface ConfigOut {
   snapshot_min_s: number;
   snapshot_max_s: number;
   livekit_url: string;
+  recaptcha_site_key: string;
 }
 
 export interface LinkResolveOut {

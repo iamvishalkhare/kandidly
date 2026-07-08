@@ -308,6 +308,26 @@ def _proctoring_config(enabled: bool) -> ProctoringConfig:
     return ProctoringConfig(enabled=enabled, snapshot_min_s=10, snapshot_max_s=10)
 
 
+def _builder_is_valid(body: ConsoleRequisitionIn, schema: dict) -> bool:
+    """Whether the builder payload is fully deployable — mirrors the client-side
+    error list (and _create_template_and_rubric's checks). Used to decide draft
+    vs offline on a non-deploy save: an unresolved error such as removing every
+    must-have skill must persist the requisition as a draft, even when it does
+    not change the versioned template/rubric artifacts."""
+    try:
+        if not body.title.strip() or not body.domain.strip() or not body.skills:
+            raise AppError("validation_error", "incomplete requisition")
+        if any(not c.description.strip() for c in body.rubric):
+            raise AppError("validation_error", "every rubric criterion needs a description")
+        validate_template(schema)
+        validate_criteria(
+            builder_rubric_to_criteria([c.model_dump() for c in body.rubric], is_draft=False)
+        )
+    except AppError:
+        return False
+    return True
+
+
 async def _upsert_catalog(db: AsyncSession, org_id, user: AuthUser, body: ConsoleRequisitionIn):
     from app.api.admin import _upsert_catalog as upsert
 
@@ -327,18 +347,25 @@ async def _create_template_and_rubric(
     when versioning an existing requisition's artifacts."""
     schema = builder_fields_to_schema([f.model_dump() for f in body.screening_fields])
     
+    # Mirrors the builder's client-side error list: any failure keeps the
+    # artifacts (and thus the requisition) in draft; deploys surface the error.
     is_valid = True
     try:
+        if not body.title.strip():
+            raise AppError("validation_error", "job title is required")
+        if not body.domain.strip():
+            raise AppError("validation_error", "domain is required")
+        if not body.skills:
+            raise AppError("validation_error", "at least one must-have skill is required")
+        if any(not c.description.strip() for c in body.rubric):
+            raise AppError("validation_error", "every rubric criterion needs a description")
         validate_template(schema)
         test_criteria = builder_rubric_to_criteria([c.model_dump() for c in body.rubric], is_draft=False)
         validate_criteria(test_criteria)
     except AppError:
+        if body.deploy:
+            raise
         is_valid = False
-
-    if body.deploy and not is_valid:
-        validate_template(schema)
-        test_criteria = builder_rubric_to_criteria([c.model_dump() for c in body.rubric], is_draft=False)
-        validate_criteria(test_criteria)
 
     status = "published" if is_valid else "draft"
     criteria = builder_rubric_to_criteria([c.model_dump() for c in body.rubric], is_draft=not is_valid)
@@ -527,6 +554,9 @@ async def deploy_requisition(
         entity_type="requisition",
         entity_id=req.id,
     )
+    # See update_requisition: commit before returning so the just-created
+    # requisition is durable before the response (and any immediate re-read).
+    await db.commit()
     return await _detail_out(db, req)
 
 
@@ -572,9 +602,8 @@ async def update_requisition(
         (current_rubric is not None and current_rubric.status == "draft")
     )
 
-    artifact_status = None
     if schema_changed or rubric_changed or force_new_version:
-        template, rubric, artifact_status = await _create_template_and_rubric(
+        template, rubric, _ = await _create_template_and_rubric(
             db,
             org_id,
             user,
@@ -607,10 +636,10 @@ async def update_requisition(
         req.status = "open"
         req.opens_at = req.opens_at or datetime.now(UTC)
     else:
-        if schema_changed or rubric_changed or force_new_version:
-            req.status = "paused" if artifact_status == "published" else "draft"
-        else:
-            req.status = "paused" if (current_template and current_template.status == "published") else "draft"
+        # Draft vs offline tracks the whole payload's validity (including
+        # skills), not just whether the versioned artifacts changed — otherwise
+        # clearing all skills leaves a stale "paused" status behind.
+        req.status = "paused" if _builder_is_valid(body, new_schema) else "draft"
     req.updated_at = datetime.now(UTC)
 
     await _upsert_catalog(db, org_id, user, body)
@@ -622,6 +651,11 @@ async def update_requisition(
         entity_id=req.id,
         meta={"new_versions": schema_changed or rubric_changed},
     )
+    # Commit before returning: under Starlette's yield-dependency teardown the
+    # get_db() commit runs *after* the response is sent, so a client that
+    # immediately re-opens the builder would read pre-commit state (e.g. skills
+    # it just cleared reappear). Committing here makes the save read-your-write.
+    await db.commit()
     return await _detail_out(db, req)
 
 

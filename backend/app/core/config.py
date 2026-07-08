@@ -43,6 +43,13 @@ class Settings(BaseSettings):
     # internal service auth (SPEC §12.4)
     service_token: str = "dev-service-token-change-me"
 
+    # captcha — Google reCAPTCHA v3, guards the candidate form submit against
+    # bot/DDoS abuse. Empty secret → verification is skipped (dev parity with the
+    # fail-open rate limiter); set both keys in prod to enforce.
+    recaptcha_site_key: str = ""
+    recaptcha_secret_key: str = ""
+    recaptcha_min_score: float = 0.5
+
     # LiveKit
     livekit_url: str = ""
     livekit_api_key: str = ""

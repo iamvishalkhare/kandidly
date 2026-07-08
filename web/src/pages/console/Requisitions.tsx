@@ -107,13 +107,17 @@ function ReqCard({
             {copied ? <Check size={14} /> : <Copy size={14} />}
           </button>
           {req.status === 'draft' ? (
-            <div className="px-3 py-1 label-mono flex items-center gap-2 select-none border border-[var(--amber-chip-text)]/20 bg-[var(--amber-chip-bg)] text-[var(--amber-chip-text)]">
+            <div
+              title="Draft — this requisition has unresolved errors. Open it to complete and deploy."
+              className="px-3 py-1 label-mono flex items-center gap-2 select-none border border-[var(--amber-chip-text)]/20 bg-[var(--amber-chip-bg)] text-[var(--amber-chip-text)]"
+            >
               <span className="size-2 bg-[var(--amber-chip-text)]" />
               DRAFT
             </div>
           ) : (
             <button
               onClick={handleToggle}
+              title={req.live ? 'Live — click to take offline' : 'Offline — click to take live'}
               className={cn(
                 'px-3 py-1 label-mono flex items-center gap-2 select-none transition-colors duration-200',
                 req.live
@@ -198,12 +202,21 @@ function ReqCard({
         </div>
         <button
           type="button"
-          onClick={openCompletedInterviews}
-          className="flex-1 p-4 flex flex-col justify-center items-center hover:bg-surface-container transition-colors duration-150 cursor-pointer focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary-container"
-          aria-label={`View completed interviews for ${req.code}`}
+          onClick={req.completed > 0 ? openCompletedInterviews : undefined}
+          disabled={req.completed === 0}
+          title={req.completed === 0 ? 'Nobody has taken the interview yet' : undefined}
+          className={cn(
+            'flex-1 p-4 flex flex-col justify-center items-center transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary-container',
+            req.completed > 0 ? 'hover:bg-surface-container cursor-pointer' : 'cursor-not-allowed',
+          )}
+          aria-label={
+            req.completed > 0
+              ? `View completed interviews for ${req.code}`
+              : 'Nobody has taken the interview yet'
+          }
         >
           <span className={cn('font-display text-headline-md', req.live ? 'text-primary-container' : 'text-on-surface-variant')}>
-            {req.completed > 0 ? req.completed : '—'}
+            {req.completed}
           </span>
           <span className="label-mono text-on-surface-variant mt-1">Completed</span>
         </button>
@@ -306,8 +319,8 @@ export default function ConsoleRequisitions() {
   return (
     <ConsoleLayout>
       {/* Control bar */}
-      <header className="h-16 border-b border-outline-variant bg-surface flex items-center justify-between px-4 sticky top-0 z-30">
-        <div className="flex items-center gap-4 h-full">
+      <header className="h-16 border-b border-outline-variant bg-surface flex items-center justify-between px-8 sticky top-0 z-30">
+        <div className="flex items-center gap-10 h-full m-[1em]">
           {/* Search */}
           <div className="relative h-10 w-64 flex items-center border border-outline-variant bg-surface-container-lowest focus-within:border-primary-container transition-colors">
             <Search size={16} className="absolute left-3 text-on-surface-variant" />
@@ -475,7 +488,7 @@ export default function ConsoleRequisitions() {
         </div>
         <Link
           to="/console/requisitions/new"
-          className="h-10 px-6 bg-primary-container text-on-primary-container label-mono font-bold flex items-center gap-2 border border-primary-container hover:bg-transparent hover:text-primary-fixed-dim transition-colors duration-150"
+          className="h-10 px-6 ml-10 bg-primary-container text-on-primary-container label-mono font-bold flex items-center gap-2 border border-primary-container hover:bg-transparent hover:text-primary-fixed-dim transition-colors duration-150"
         >
           <Plus size={16} />
           New Requisition

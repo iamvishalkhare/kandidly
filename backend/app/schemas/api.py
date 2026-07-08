@@ -16,6 +16,8 @@ class ConfigOut(BaseModel):
     snapshot_min_s: int
     snapshot_max_s: int
     livekit_url: str
+    # Empty when reCAPTCHA is not configured; the client then skips the challenge.
+    recaptcha_site_key: str = ""
 
 
 class LinkResolveOut(BaseModel):

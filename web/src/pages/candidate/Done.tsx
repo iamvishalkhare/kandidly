@@ -4,8 +4,12 @@
  */
 
 import { CheckCircle2 } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 
 export default function CandidateDone() {
+  const [params] = useSearchParams();
+  const fromInterview = params.get('from') === 'interview';
+
   return (
     <div
       className="min-h-screen flex items-center justify-center p-6"
@@ -31,11 +35,12 @@ export default function CandidateDone() {
 
         <div className="space-y-2">
           <h1 className="text-xl font-semibold tracking-tight" style={{ color: 'var(--text-primary)' }}>
-            Thank you for your time
+            {fromInterview ? 'Your interview is complete' : 'Thank you for your time'}
           </h1>
           <p className="text-sm leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-            Your application has been received. The hiring team will review your submission
-            and be in touch with next steps.
+            {fromInterview
+              ? 'Thanks for completing your interview. The hiring team will review your submission and be in touch with next steps.'
+              : 'Your application has been received. The hiring team will review your submission and be in touch with next steps.'}
           </p>
         </div>
 

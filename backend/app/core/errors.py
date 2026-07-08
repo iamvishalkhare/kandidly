@@ -21,6 +21,7 @@ ERROR_CODES = {
     "not_found",
     "conflict",
     "rate_limited",
+    "captcha_failed",
     "unauthorized",
     "internal_error",
 }
@@ -36,6 +37,7 @@ _CODE_STATUS = {
     "not_found": 404,
     "conflict": 409,
     "rate_limited": 429,
+    "captcha_failed": 403,
     "unauthorized": 401,
     "internal_error": 500,
 }

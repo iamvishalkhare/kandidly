@@ -37,7 +37,14 @@ async def _wait_for_resume(db_factory, submission_id) -> None:
     while waited < _RESUME_WAIT_SECONDS:
         async with db_factory() as db:
             sub = await db.get(FormSubmission, submission_id)
-            if sub is None or sub.resume_parse_status in ("done", "failed", "skipped"):
+            # Stop waiting when there's nothing to wait for: no submission, no
+            # resume was uploaded (status stays None forever otherwise), or the
+            # parse already reached a terminal state.
+            if (
+                sub is None
+                or sub.resume_file_id is None
+                or sub.resume_parse_status in ("done", "failed", "skipped")
+            ):
                 return
         await asyncio.sleep(3)
         waited += 3

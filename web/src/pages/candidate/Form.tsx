@@ -10,7 +10,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Upload, FileText, CheckCircle2, AlertCircle, ArrowRight,
 } from 'lucide-react';
-import { candidateApi } from '../../lib/api';
+import { candidateApi, publicApi } from '../../lib/api';
+import { executeRecaptcha, loadRecaptcha } from '../../lib/recaptcha';
 import {
   Button, Spinner,
   Skeleton, ErrorState,
@@ -430,9 +431,22 @@ export default function CandidateForm() {
     enabled: !!applicationId,
   });
 
+  // Public config carries the reCAPTCHA v3 site key (empty → challenge skipped).
+  const { data: config } = useQuery({
+    queryKey: ['config'],
+    queryFn: publicApi.getConfig,
+    staleTime: Infinity,
+  });
+  const siteKey = config?.recaptcha_site_key ?? '';
+
+  // Warm the reCAPTCHA script early so the token mint on submit is instant.
+  useEffect(() => {
+    if (siteKey) loadRecaptcha(siteKey).catch(() => {});
+  }, [siteKey]);
+
   // Local answers mirror
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
-  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Initialize answers from server on first load (intentionally only tracks id changes)
@@ -454,9 +468,11 @@ export default function CandidateForm() {
         try {
           await candidateApi.patchForm(applicationId!, { [key]: val });
           setSaveStatus('saved');
-          setTimeout(() => setSaveStatus('idle'), 2000);
+          setTimeout(() => setSaveStatus(s => (s === 'saved' ? 'idle' : s)), 2000);
         } catch {
-          setSaveStatus('idle');
+          // Leave the value in local state; it will be re-sent on the next
+          // edit and is flushed in full on submit.
+          setSaveStatus('error');
         }
       }, 800);
       return next;
@@ -464,11 +480,36 @@ export default function CandidateForm() {
   }, [applicationId]);
 
   const submitMutation = useMutation({
-    mutationFn: () => candidateApi.submitForm(applicationId!),
+    mutationFn: async () => {
+      // Flush any pending debounced autosave so a last-second edit isn't lost.
+      // patchForm shallow-merges, so re-sending the full answers is safe and
+      // guarantees the server has the latest values before we submit.
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+        debounceRef.current = null;
+      }
+      await candidateApi.patchForm(applicationId!, answers);
+      // Mint a fresh reCAPTCHA v3 token bound to this action; the backend
+      // verifies it before creating the interview + plan job. No-op (null) when
+      // reCAPTCHA is unconfigured.
+      const captchaToken = await executeRecaptcha(siteKey, 'form_submit');
+      return candidateApi.submitForm(applicationId!, captchaToken);
+    },
     onSuccess: () => {
       navigate(`/apply/${applicationId}/lobby`);
     },
   });
+
+  // Distinguish a bot-check rejection from a generic submit failure.
+  const submitErrorMessage = (): string => {
+    const err = submitMutation.error as
+      | { response?: { data?: { code?: string } } }
+      | undefined;
+    if (err?.response?.data?.code === 'captcha_failed') {
+      return "Couldn't verify you're human. Please try submitting again.";
+    }
+    return 'Submission failed. Please try again.';
+  };
 
   if (isLoading) {
     return (
@@ -562,6 +603,12 @@ export default function CandidateForm() {
               Saved
             </span>
           )}
+          {saveStatus === 'error' && (
+            <span className="flex items-center gap-1 text-amber-400">
+              <AlertCircle size={12} />
+              Couldn't save — will retry
+            </span>
+          )}
         </span>
         <Button
           variant="primary"
@@ -576,7 +623,17 @@ export default function CandidateForm() {
       </div>
 
       {submitMutation.isError && (
-        <p className="text-xs text-red-400 text-right mt-2">Submission failed. Please try again.</p>
+        <p className="text-xs text-red-400 text-right mt-2">{submitErrorMessage()}</p>
+      )}
+
+      {/* reCAPTCHA v3 requires either the (auto-injected) badge or this notice. */}
+      {siteKey && (
+        <p className="text-[11px] mt-4 text-right" style={{ color: 'var(--text-muted)' }}>
+          Protected by reCAPTCHA —{' '}
+          <a href="https://policies.google.com/privacy" target="_blank" rel="noreferrer" className="underline">Privacy</a>
+          {' & '}
+          <a href="https://policies.google.com/terms" target="_blank" rel="noreferrer" className="underline">Terms</a>.
+        </p>
       )}
     </FormLayout>
   );

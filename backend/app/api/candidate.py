@@ -13,6 +13,7 @@ from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import storage
+from app.core.captcha import require_captcha
 from app.core.config import settings
 from app.core.deps import get_db, require_candidate
 from app.core.errors import AppError
@@ -188,7 +189,13 @@ async def upload_resume(
 
 
 # --- submit (SPEC §8.2, §12.2 #7) ------------------------------------------
-@router.post("/applications/{application_id}/form/submit", response_model=FormSubmitOut)
+# reCAPTCHA v3 guards this endpoint: it creates the Interview and enqueues the
+# plan-generation LLM job, so it's the costly step worth gating against bots.
+@router.post(
+    "/applications/{application_id}/form/submit",
+    response_model=FormSubmitOut,
+    dependencies=[require_captcha("form_submit")],
+)
 async def submit_form(
     application_id: UUID,
     user: AuthUser = Depends(require_candidate),

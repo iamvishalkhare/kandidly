@@ -23,6 +23,7 @@ dependencies = [
     "jinja2>=3.1",
     "uuid7>=0.1.0",                   # uuid7() generator; app-layer UUIDv7 (SPEC D16)
     "redis>=5.2",
+    "livekit-api>=0.8",              # AccessToken minting for candidate/observer room tokens
     # Resume pipeline (SPEC §8.6.2) — [VERIFY-DOC]
     "pymupdf>=1.24",
     "python-docx>=1.1",

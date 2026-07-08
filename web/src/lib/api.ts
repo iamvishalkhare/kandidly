@@ -82,6 +82,12 @@ export const publicApi = {
     const { data } = await api.get<DevUser[]>('/api/public/dev-users');
     return data;
   },
+  // Dev-only: abandon a candidate's current application for this link so the
+  // next claim starts a fresh interview run.
+  devReset: async (token: string, email: string): Promise<{ reset: number }> => {
+    const { data } = await api.post<{ reset: number }>('/api/public/dev-reset', { token, email });
+    return data;
+  },
 };
 
 // ─── Candidate ─────────────────────────────────────────────────────────────────
@@ -107,8 +113,12 @@ export const candidateApi = {
     });
     return data;
   },
-  submitForm: async (id: string): Promise<FormSubmitOut> => {
-    const { data } = await api.post<FormSubmitOut>(`/api/candidate/applications/${id}/form/submit`);
+  submitForm: async (id: string, captchaToken?: string | null): Promise<FormSubmitOut> => {
+    const { data } = await api.post<FormSubmitOut>(
+      `/api/candidate/applications/${id}/form/submit`,
+      undefined,
+      captchaToken ? { headers: { 'X-Recaptcha-Token': captchaToken } } : undefined,
+    );
     return data;
   },
   postConsent: async (id: string, body: ConsentIn): Promise<void> => {

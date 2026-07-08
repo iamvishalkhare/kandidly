@@ -29,6 +29,7 @@ import math
 import wave
 from datetime import UTC, datetime, timedelta
 from statistics import median
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from sqlalchemy import select
 from sqlalchemy import text as sa_text
@@ -37,6 +38,7 @@ from app.core import storage
 from app.core.config import settings
 from app.core.ids import new_id
 from app.db import seed_fixtures as fx
+from app.db.base import Base
 from app.db.models import (
     Application,
     ApplicationEvent,
@@ -64,6 +66,7 @@ from app.db.models import (
     User,
 )
 from app.db.session import SessionLocal
+from app.domain.builder import builder_fields_to_schema, builder_rubric_to_criteria
 from app.domain.links import generate_token
 from app.domain.scoring import anchor_to_score100
 from app.schemas.interview_config import InterviewConfig
@@ -81,6 +84,8 @@ TEMPLATE_SCHEMA = {
             "domains",
             "complex_system",
             "open_source",
+            "earliest_start",
+            "github",
             "resume",
         ],
     },
@@ -91,12 +96,14 @@ TEMPLATE_SCHEMA = {
             "title": "Full name",
             "maxLength": 120,
             "x-field": "short_text",
+            "x-builder-type": "text",
         },
         "current_role": {
             "type": "string",
             "title": "Current role / title",
             "maxLength": 120,
             "x-field": "short_text",
+            "x-builder-type": "text",
         },
         "years_python": {
             "type": "integer",
@@ -104,6 +111,7 @@ TEMPLATE_SCHEMA = {
             "minimum": 0,
             "maximum": 40,
             "x-field": "number",
+            "x-builder-type": "text",
         },
         "kafka_rating": {
             "type": "integer",
@@ -111,28 +119,50 @@ TEMPLATE_SCHEMA = {
             "minimum": 1,
             "maximum": 5,
             "x-field": "scale",
+            "x-builder-type": "range",
         },
         "domains": {
             "type": "array",
             "title": "Domains you have worked in",
             "items": {"enum": ["payments", "healthcare", "ecommerce", "other"]},
             "x-field": "multi_select",
+            "x-builder-type": "multi_select",
         },
         "complex_system": {
             "type": "string",
             "title": "Describe the most complex system you built",
             "maxLength": 2000,
             "x-field": "long_text",
+            "x-builder-type": "textarea",
         },
         "open_source": {
-            "type": "boolean",
+            "type": "string",
             "title": "Do you contribute to open source?",
-            "x-field": "boolean",
+            "enum": ["Yes", "No"],
+            "x-field": "single_select",
+            "x-builder-type": "multiple_choice",
+        },
+        "earliest_start": {
+            "type": "string",
+            "title": "Earliest available start date",
+            "maxLength": 40,
+            "x-field": "short_text",
+            "x-builder-type": "date",
+            "x-placeholder": "YYYY-MM-DD",
+        },
+        "github": {
+            "type": "string",
+            "title": "Link your GitHub profile",
+            "maxLength": 300,
+            "x-field": "short_text",
+            "x-builder-type": "social",
+            "x-placeholder": "https://github.com/…",
         },
         "resume": {
             "type": "string",
             "title": "Upload your resume",
             "x-field": "file",
+            "x-builder-type": "file",
             "x-accept": [".pdf", ".docx"],
             "x-max-bytes": 10485760,
         },
@@ -250,6 +280,14 @@ WEBP_1PX = base64.b64decode("UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==")
 # --------------------------------------------------------------------------- #
 # helpers
 # --------------------------------------------------------------------------- #
+def _stable_user_id(email: str) -> UUID:
+    """Deterministic id for a seed account, derived from its email. Keeps the
+    well-known dev users' ids (and thus their /dev-users bearer tokens) stable
+    across `--reset` re-seeds, so re-seeding does not silently invalidate a
+    token already stored in a browser's localStorage."""
+    return uuid5(NAMESPACE_URL, f"kandidly-seed-user:{email.lower()}")
+
+
 async def _get_or_create_user(
     db, email: str, role: str, *, display_name: str | None = None, org_id=None
 ) -> User:
@@ -261,7 +299,7 @@ async def _get_or_create_user(
             existing.org_id = org_id
         return existing
     user = User(
-        id=new_id(),
+        id=_stable_user_id(email),
         email=email,
         role=role,
         display_name=display_name,
@@ -400,6 +438,16 @@ async def _create_rubric(db, org_id, admin_id, *, interview_type, title, criteri
     return r
 
 
+def _rubric_rows_to_tuples(rows: list[dict]) -> list[tuple]:
+    """Builder rubric rows ({name,description,weight}) → _create_rubric tuples,
+    reusing the console's slug/anchor logic so keys and generic anchors match
+    what the builder produces on deploy."""
+    return [
+        (c["key"], c["name"], c["description"], c["weight"], c["display_order"], c["level_anchors"])
+        for c in builder_rubric_to_criteria(rows, is_draft=False)
+    ]
+
+
 async def _req_by_code(db, org_id, code: str) -> Requisition | None:
     return (
         await db.execute(
@@ -467,7 +515,12 @@ async def _ensure_flagship(db, org, admin, now) -> tuple[Requisition, InviteLink
     req.sample_questions = [
         {"id": "sq-1", "text": "Tell me about the most complex system you have built."},
         {"id": "sq-2", "text": "How do you decide when a service boundary deserves to exist?"},
+        {"id": "sq-3", "text": "Walk me through a production incident you personally root-caused."},
+        {"id": "sq-4", "text": "How do you communicate consistency tradeoffs to product teams?"},
     ]
+    # Seed the builder's "Close Date" with a concrete future datetime.
+    req.end_date = (now + timedelta(days=45)).replace(hour=23, minute=59, second=0, microsecond=0)
+    req.closes_at = req.end_date
 
     link = (
         await db.execute(
@@ -493,13 +546,16 @@ async def _ensure_extra_requisitions(db, org, admin, now) -> None:
     for spec in fx.EXTRA_REQUISITIONS:
         if await _req_by_code(db, org.id, spec["code"]) is not None:
             continue
+        # Builder-shaped screening fields → Kandidly JSON-Schema, using the
+        # same conversion the console builder does so the round trip is
+        # lossless (x-builder-type preserved on each property).
         template = await _create_template(
             db,
             org.id,
             admin.id,
             interview_type=spec["interview_type"],
             title=f"{spec['title']} KYI",
-            schema=fx.generic_template_schema(spec["title"]),
+            schema=builder_fields_to_schema(spec["screening_fields"]),
             hints={"full_name": {"use_in_plan": False}},
             now=now,
         )
@@ -509,10 +565,16 @@ async def _ensure_extra_requisitions(db, org, admin, now) -> None:
             admin.id,
             interview_type=spec["interview_type"],
             title=f"{spec['title']} Rubric",
-            criteria=fx.generic_rubric_criteria(spec["rubric"]),
+            criteria=_rubric_rows_to_tuples(spec["rubric"]),
             now=now,
         )
         await db.flush()
+        close_in = spec.get("close_in_days")
+        end_date = (
+            (now + timedelta(days=close_in)).replace(hour=23, minute=59, second=0, microsecond=0)
+            if close_in is not None
+            else None
+        )
         req = Requisition(
             id=new_id(),
             org_id=org.id,
@@ -530,6 +592,8 @@ async def _ensure_extra_requisitions(db, org, admin, now) -> None:
             status=spec["status"],
             interview_config=InterviewConfig(tone=spec["tone"]).model_dump(),
             created_by=admin.id,
+            end_date=end_date,
+            closes_at=end_date,
         )
         db.add(req)
         await db.flush()
@@ -645,7 +709,7 @@ async def _seed_pipeline(db, case: dict, req, template, link, recruiter, media_o
             "kafka_rating": 3,
             "domains": ["ecommerce"],
             "complex_system": case["story"],
-            "open_source": False,
+            "open_source": "No",
         },
         resume_parse_status="skipped",
         submitted_at=started - timedelta(days=1, hours=-4),
@@ -902,11 +966,39 @@ async def _seed_pipeline(db, case: dict, req, template, link, recruiter, media_o
 
 
 # --------------------------------------------------------------------------- #
+# purge (clean slate for `--reset`)
+# --------------------------------------------------------------------------- #
+# Everything except the migration bookkeeping and the default organization row
+# (created by migration 0003; the seed reads it back via _ensure_org).
+_PRESERVE_TABLES = frozenset({"alembic_version", "organizations"})
+
+
+async def purge(db) -> None:
+    """Delete all seeded and organic data for a clean re-seed.
+
+    TRUNCATE ... CASCADE clears dependents regardless of FK order; RESTART
+    IDENTITY resets serial columns owned by the truncated tables. The two
+    standalone code sequences aren't owned by any table, so reset them
+    explicitly. Orphaned MinIO objects from prior seeds are harmless (new
+    interviews get fresh keys) and are left in place.
+    """
+    tables = [t.name for t in Base.metadata.sorted_tables if t.name not in _PRESERVE_TABLES]
+    quoted = ", ".join(f'"{name}"' for name in tables)
+    await db.execute(sa_text(f"TRUNCATE {quoted} RESTART IDENTITY CASCADE"))
+    for seq in ("requisition_code_seq", "interview_code_seq"):
+        await db.execute(sa_text(f"ALTER SEQUENCE {seq} RESTART WITH 1"))
+    await db.commit()
+    print(f"purged {len(tables)} data tables (preserved {', '.join(sorted(_PRESERVE_TABLES))})")
+
+
+# --------------------------------------------------------------------------- #
 # entrypoint
 # --------------------------------------------------------------------------- #
-async def seed() -> None:
+async def seed(reset: bool = False) -> None:
     media_ok = await _probe_s3()
     async with SessionLocal() as db:
+        if reset:
+            await purge(db)
         org = await _ensure_org(db)
         now = datetime.now(UTC)
 
@@ -957,4 +1049,6 @@ def _print_creds(admin, recruiter, cand1, cand2, token) -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(seed())
+    import sys
+
+    asyncio.run(seed(reset="--reset" in sys.argv[1:]))

@@ -4,6 +4,12 @@ Catalog values mirror the console builder's autocomplete lists
 (web/src/pages/console/RequisitionBuilder.tsx); candidate names mirror the
 console mock roster (web/src/pages/console/interviewData.ts) so the future
 console APIs serve familiar data.
+
+Every non-flagship requisition ships a rich, builder-shaped screening form
+(``screening_fields``) and rubric (``rubric``) so that opening any of them in
+the console Requisition Builder shows all sections fully populated. The field
+lists intentionally span all eight builder field types across the set:
+text, textarea, multiple_choice, multi_select, range, date, file, social.
 """
 
 from __future__ import annotations
@@ -65,86 +71,24 @@ CANDIDATES: list[tuple[str, str]] = [
 ]
 
 
-def generic_template_schema(role_title: str) -> dict:
-    """A small candidate-renderer-compatible KYI schema for non-flagship
-    requisitions (only x-field kinds the web form renderer supports)."""
+def _field(ftype, label, *, placeholder="", required=False, options=None) -> dict:
+    """Builder-shaped screening field ({type,label,placeholder,required,options})
+    — the exact shape app.domain.builder.builder_fields_to_schema consumes."""
     return {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "type": "object",
-        "x-kandidly": {
-            "profile": "kyi-form/v1",
-            "field_order": [
-                "full_name",
-                "current_role",
-                "years_experience",
-                "motivation",
-                "resume",
-            ],
-        },
-        "required": ["full_name", "resume"],
-        "properties": {
-            "full_name": {
-                "type": "string",
-                "title": "Full name",
-                "maxLength": 120,
-                "x-field": "short_text",
-            },
-            "current_role": {
-                "type": "string",
-                "title": "Current role / title",
-                "maxLength": 120,
-                "x-field": "short_text",
-            },
-            "years_experience": {
-                "type": "integer",
-                "title": f"Years of relevant experience for {role_title}",
-                "minimum": 0,
-                "maximum": 40,
-                "x-field": "number",
-            },
-            "motivation": {
-                "type": "string",
-                "title": "Why this role?",
-                "maxLength": 2000,
-                "x-field": "long_text",
-            },
-            "resume": {
-                "type": "string",
-                "title": "Upload your resume",
-                "x-field": "file",
-                "x-accept": [".pdf", ".docx"],
-                "x-max-bytes": 10485760,
-            },
-        },
+        "type": ftype,
+        "label": label,
+        "placeholder": placeholder,
+        "required": required,
+        "options": list(options or []),
     }
 
 
-def generic_rubric_criteria(keys: list[tuple[str, str, int]]) -> list[tuple]:
-    """(key, name, weight) → seed.RUBRIC_CRITERIA-shaped tuples with generic
-    anchors. Weights must total 100."""
-    out = []
-    for order, (key, name, weight) in enumerate(keys, start=1):
-        out.append(
-            (
-                key,
-                name,
-                f"Assessment of {name.lower()}.",
-                weight,
-                order,
-                [
-                    {"level": 1, "anchor": "Well below the bar."},
-                    {"level": 2, "anchor": "Below the bar."},
-                    {"level": 3, "anchor": "Meets the bar."},
-                    {"level": 4, "anchor": "Above the bar."},
-                    {"level": 5, "anchor": "Exceptional."},
-                ],
-            )
-        )
-    return out
-
-
 # Non-flagship requisitions (the flagship swe_backend one is defined in
-# seed.py and carries the interview pipelines).
+# seed.py and carries the interview pipelines). Each `screening_fields` entry
+# is builder-shaped; seed.py converts it via builder_fields_to_schema so the
+# round trip through the console builder is lossless. `rubric` weights total
+# 100 per requisition. `close_in_days` seeds the "Close Date" field (negative
+# ⇒ already past, for a closed requisition).
 EXTRA_REQUISITIONS: list[dict] = [
     {
         "code": "ML-014",
@@ -153,19 +97,80 @@ EXTRA_REQUISITIONS: list[dict] = [
         "skills": ["Python", "PyTorch", "RAG", "Vector DBs"],
         "objective": (
             "Own retrieval quality for the RAG stack end-to-end: embedding "
-            "models, chunking strategy, and eval harnesses."
+            "models, chunking strategy, and eval harnesses. We want someone "
+            "who can move a real quality metric, not just ship a demo."
         ),
         "sample_questions": [
             "Walk me through a retrieval-quality regression you debugged.",
-            "How would you evaluate chunking strategies offline?",
+            "How would you evaluate chunking strategies offline before shipping?",
+            "When would you fine-tune a model versus improve retrieval or prompting?",
         ],
         "tone": "technical",
         "status": "open",
         "interview_type": "ml_engineer",
+        "close_in_days": 45,
+        "screening_fields": [
+            _field(
+                "text", "Current role / title", placeholder="e.g. Senior ML Engineer", required=True
+            ),
+            _field(
+                "textarea",
+                "Describe an ML system you shipped to production",
+                placeholder="Model, data, serving, and your specific role…",
+                required=True,
+            ),
+            _field(
+                "multi_select",
+                "Which ML domains have you worked in?",
+                options=[
+                    "NLP / LLMs",
+                    "Computer Vision",
+                    "Recommendations",
+                    "Search & Retrieval",
+                    "Tabular / Classical ML",
+                ],
+            ),
+            _field(
+                "multiple_choice",
+                "Largest model you have fine-tuned",
+                options=["Under 1B params", "1–7B", "7–70B", "70B+"],
+            ),
+            _field("range", "Rate your production PyTorch proficiency"),
+            _field(
+                "social",
+                "Link your GitHub or Hugging Face profile",
+                placeholder="https://github.com/…",
+            ),
+            _field(
+                "file", "Upload your resume", placeholder="PDF or DOCX, up to 10 MB", required=True
+            ),
+        ],
         "rubric": [
-            ("ml_fundamentals", "ML fundamentals", 40),
-            ("retrieval_systems", "Retrieval systems", 35),
-            ("communication", "Communication", 25),
+            {
+                "name": "ML fundamentals",
+                "description": "Depth on modeling choices, training dynamics, and evaluation.",
+                "weight": 30,
+            },
+            {
+                "name": "Retrieval & RAG systems",
+                "description": "Embeddings, chunking, and offline eval of retrieval quality.",
+                "weight": 25,
+            },
+            {
+                "name": "Production ML Ops",
+                "description": "Serving, monitoring, and safe rollout of models.",
+                "weight": 20,
+            },
+            {
+                "name": "Problem solving",
+                "description": "Debugging regressions with structured, hypothesis-driven logic.",
+                "weight": 15,
+            },
+            {
+                "name": "Communication",
+                "description": "Clarity when explaining tradeoffs to technical and product peers.",
+                "weight": 10,
+            },
         ],
         "clicks": 342,
         "uses": 51,
@@ -175,17 +180,67 @@ EXTRA_REQUISITIONS: list[dict] = [
         "title": "Data Scientist",
         "domain": "Data Science",
         "skills": ["Python", "SQL", "Spark"],
-        "objective": "Drive experiment design and causal analysis for growth initiatives.",
+        "objective": (
+            "Drive experiment design and causal analysis for growth "
+            "initiatives, turning fuzzy questions into decisions the team "
+            "can act on."
+        ),
         "sample_questions": [
             "Describe an A/B test you designed that produced a surprising result.",
+            "How do you decide when an observed effect is causal versus correlational?",
+            "Tell me about a time your analysis changed a leadership decision.",
         ],
         "tone": "structured",
         "status": "open",
         "interview_type": "data_scientist",
+        "close_in_days": 30,
+        "screening_fields": [
+            _field(
+                "text", "Current role / title", placeholder="e.g. Data Scientist II", required=True
+            ),
+            _field(
+                "textarea",
+                "Describe an experiment whose result changed a product decision",
+                placeholder="Hypothesis, design, and the call it drove…",
+                required=True,
+            ),
+            _field(
+                "multiple_choice",
+                "Primary statistical toolkit",
+                options=["Python / statsmodels", "R", "SQL-first", "Bayesian stack"],
+            ),
+            _field("range", "Rate your SQL proficiency"),
+            _field("date", "Earliest available start date"),
+            _field(
+                "file", "Upload your resume", placeholder="PDF or DOCX, up to 10 MB", required=True
+            ),
+        ],
         "rubric": [
-            ("statistics", "Statistics & experimentation", 45),
-            ("data_wrangling", "Data wrangling", 30),
-            ("communication", "Communication", 25),
+            {
+                "name": "Statistics & experimentation",
+                "description": "Rigorous experiment design and correct inference.",
+                "weight": 35,
+            },
+            {
+                "name": "Causal inference",
+                "description": "Isolating causal effects from observational and A/B data.",
+                "weight": 20,
+            },
+            {
+                "name": "Data wrangling & SQL",
+                "description": "Efficiently shaping messy data into analysis-ready form.",
+                "weight": 20,
+            },
+            {
+                "name": "Business impact",
+                "description": "Framing analysis around decisions that move the metric.",
+                "weight": 15,
+            },
+            {
+                "name": "Communication",
+                "description": "Explaining findings and uncertainty to non-technical partners.",
+                "weight": 10,
+            },
         ],
         "clicks": 210,
         "uses": 33,
@@ -195,18 +250,75 @@ EXTRA_REQUISITIONS: list[dict] = [
         "title": "Platform Engineer",
         "domain": "Infrastructure",
         "skills": ["Kubernetes", "Terraform", "Go", "AWS"],
-        "objective": "Build and operate the multi-region compute platform.",
+        "objective": (
+            "Build and operate the multi-region compute platform: the "
+            "paved road other teams deploy on, with reliability and cost as "
+            "first-class concerns."
+        ),
         "sample_questions": [
             "Tell me about an incident you ran point on.",
             "How do you approach zero-downtime migrations?",
+            "What does a healthy on-call rotation look like to you?",
         ],
         "tone": "bar_raiser",
         "status": "paused",
         "interview_type": "platform_engineer",
+        "close_in_days": 60,
+        "screening_fields": [
+            _field(
+                "text",
+                "Current role / title",
+                placeholder="e.g. Staff Platform Engineer",
+                required=True,
+            ),
+            _field(
+                "textarea",
+                "Walk through the largest production incident you led",
+                placeholder="Impact, your role, and the follow-up…",
+                required=True,
+            ),
+            _field(
+                "multi_select",
+                "Clouds you have operated at scale",
+                options=["AWS", "GCP", "Azure", "On-prem / Bare-metal"],
+            ),
+            _field(
+                "multiple_choice",
+                "Infrastructure-as-code tool of choice",
+                options=["Terraform", "Pulumi", "CloudFormation", "CDK"],
+            ),
+            _field("range", "On-call comfort level"),
+            _field("social", "Link your GitHub profile", placeholder="https://github.com/…"),
+            _field(
+                "file", "Upload your resume", placeholder="PDF or DOCX, up to 10 MB", required=True
+            ),
+        ],
         "rubric": [
-            ("reliability", "Reliability engineering", 40),
-            ("infra_depth", "Infrastructure depth", 35),
-            ("ownership", "Ownership", 25),
+            {
+                "name": "Reliability engineering",
+                "description": "SLOs, error budgets, and designing for graceful failure.",
+                "weight": 30,
+            },
+            {
+                "name": "Infrastructure depth",
+                "description": "Networking, compute, and storage fundamentals at scale.",
+                "weight": 25,
+            },
+            {
+                "name": "Incident response",
+                "description": "Calm, structured command and blameless follow-up.",
+                "weight": 20,
+            },
+            {
+                "name": "Automation & IaC",
+                "description": "Repeatable, reviewed infrastructure changes.",
+                "weight": 15,
+            },
+            {
+                "name": "Communication",
+                "description": "Clear status and tradeoff communication under pressure.",
+                "weight": 10,
+            },
         ],
         "clicks": 96,
         "uses": 12,
@@ -216,17 +328,70 @@ EXTRA_REQUISITIONS: list[dict] = [
         "title": "Product Manager",
         "domain": "Product",
         "skills": ["Figma", "SQL"],
-        "objective": "Own the candidate-experience surface from discovery to launch.",
+        "objective": (
+            "Own the candidate-experience surface from discovery to launch, "
+            "balancing user delight with measurable funnel impact."
+        ),
         "sample_questions": [
             "Walk me through a product bet that failed and what you learned.",
+            "How do you decide what not to build in a crowded roadmap?",
+            "Describe how you turned a fuzzy metric into a concrete product goal.",
         ],
         "tone": "conversational",
         "status": "open",
         "interview_type": "product_manager",
+        "close_in_days": 21,
+        "screening_fields": [
+            _field(
+                "text",
+                "Current role / title",
+                placeholder="e.g. Senior Product Manager",
+                required=True,
+            ),
+            _field(
+                "textarea",
+                "Describe a product bet that failed and what you learned",
+                placeholder="The bet, the outcome, and the lesson…",
+                required=True,
+            ),
+            _field(
+                "multiple_choice",
+                "Product surface you are strongest in",
+                options=["Consumer", "B2B SaaS", "Platform / API", "Growth"],
+            ),
+            _field("range", "Comfort reading SQL and dashboards"),
+            _field("date", "Earliest available start date"),
+            _field("social", "Link your LinkedIn profile", placeholder="https://linkedin.com/in/…"),
+            _field(
+                "file", "Upload your resume", placeholder="PDF or DOCX, up to 10 MB", required=True
+            ),
+        ],
         "rubric": [
-            ("product_sense", "Product sense", 40),
-            ("execution", "Execution", 35),
-            ("communication", "Communication", 25),
+            {
+                "name": "Product sense",
+                "description": "Judgment on what to build and why it matters to users.",
+                "weight": 30,
+            },
+            {
+                "name": "Execution & delivery",
+                "description": "Driving cross-functional work from discovery to launch.",
+                "weight": 25,
+            },
+            {
+                "name": "Analytical rigor",
+                "description": "Framing decisions with data and clear success metrics.",
+                "weight": 20,
+            },
+            {
+                "name": "Stakeholder communication",
+                "description": "Aligning engineering, design, and leadership.",
+                "weight": 15,
+            },
+            {
+                "name": "Leadership",
+                "description": "Influence without authority and raising the team's bar.",
+                "weight": 10,
+            },
         ],
         "clicks": 188,
         "uses": 27,
@@ -236,17 +401,80 @@ EXTRA_REQUISITIONS: list[dict] = [
         "title": "Growth Marketer",
         "domain": "Marketing",
         "skills": ["SEO", "Content Strategy"],
-        "objective": "Scale organic acquisition with a content-led motion.",
+        "objective": (
+            "Scale organic acquisition with a content-led motion, owning the "
+            "loop from keyword research through conversion."
+        ),
         "sample_questions": [
             "Which growth loop are you proudest of building?",
+            "How do you measure incrementality of a channel you own?",
+            "Tell me about a campaign that underperformed and your response.",
         ],
         "tone": "friendly",
         "status": "closed",
         "interview_type": "growth_marketer",
+        "close_in_days": -3,
+        "screening_fields": [
+            _field(
+                "text",
+                "Current role / title",
+                placeholder="e.g. Growth Marketing Lead",
+                required=True,
+            ),
+            _field(
+                "textarea",
+                "Describe the growth loop you are proudest of building",
+                placeholder="The loop, the metrics, and your role…",
+                required=True,
+            ),
+            _field(
+                "multi_select",
+                "Channels you have owned",
+                options=[
+                    "SEO / Content",
+                    "Paid Social",
+                    "Lifecycle / Email",
+                    "Partnerships",
+                    "Product-led",
+                ],
+            ),
+            _field(
+                "multiple_choice",
+                "Attribution model you trust most",
+                options=["Last-touch", "First-touch", "Multi-touch", "Incrementality"],
+            ),
+            _field("range", "Comfort with analytics tooling"),
+            _field("social", "Link a portfolio or campaign you led", placeholder="https://…"),
+            _field(
+                "file", "Upload your resume", placeholder="PDF or DOCX, up to 10 MB", required=True
+            ),
+        ],
         "rubric": [
-            ("growth_strategy", "Growth strategy", 50),
-            ("analytics", "Analytics", 25),
-            ("communication", "Communication", 25),
+            {
+                "name": "Growth strategy",
+                "description": "Designing durable acquisition and retention loops.",
+                "weight": 35,
+            },
+            {
+                "name": "Channel expertise",
+                "description": "Depth across the channels the role will own.",
+                "weight": 25,
+            },
+            {
+                "name": "Analytics & experimentation",
+                "description": "Measuring incrementality and iterating on evidence.",
+                "weight": 20,
+            },
+            {
+                "name": "Creative & content",
+                "description": "Judgment on messaging and content that converts.",
+                "weight": 10,
+            },
+            {
+                "name": "Communication",
+                "description": "Crisp storytelling across stakeholders and channels.",
+                "weight": 10,
+            },
         ],
         "clicks": 421,
         "uses": 64,

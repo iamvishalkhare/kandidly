@@ -12,7 +12,7 @@ import { ArrowRight, CheckCircle2, AlertTriangle, Mic, Video, WifiOff } from 'lu
 import { candidateApi } from '../../lib/api';
 import { Button, Stepper, Spinner } from '../../components/ui';
 import { cn } from '../../lib/utils';
-import type { ApplicationOut } from '../../lib/types';
+import type { ApplicationOut, JoinOut } from '../../lib/types';
 
 const CONSENT_VERSION = 'v1-2026-07';
 
@@ -21,7 +21,6 @@ const CONSENT_VERSION = 'v1-2026-07';
 function ConsentStep({ applicationId, onDone }: { applicationId: string; onDone: () => void }) {
   const [recordingAck, setRecordingAck] = useState(false);
   const [monitoringAck, setMonitoringAck] = useState(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
 
   const mutation = useMutation({
     mutationFn: () =>
@@ -32,11 +31,6 @@ function ConsentStep({ applicationId, onDone }: { applicationId: string; onDone:
       }),
     onSuccess: onDone,
   });
-
-  const handleScroll = () => {
-    // Track whether user has scrolled to the bottom (for UX only, doesn't gate submission)
-    void scrollRef.current;
-  };
 
   const canProceed = recordingAck && monitoringAck;
 
@@ -53,8 +47,6 @@ function ConsentStep({ applicationId, onDone }: { applicationId: string; onDone:
 
       {/* Scrollable consent text */}
       <div
-        ref={scrollRef}
-        onScroll={handleScroll}
         className="rounded-lg border p-5 h-48 overflow-y-auto space-y-3 text-sm leading-relaxed"
         style={{ borderColor: 'var(--border)', background: 'var(--background)', color: 'var(--text-secondary)' }}
       >
@@ -117,19 +109,28 @@ function CheckItem({
   onChange: (v: boolean) => void;
   label: string;
 }) {
+  // Real (visually-hidden) checkbox so the whole label is clickable and the
+  // control is keyboard-focusable / toggleable with Space.
   return (
     <label className="flex items-start gap-3 cursor-pointer group">
-      <div
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={e => onChange(e.target.checked)}
+        className="peer sr-only"
+      />
+      <span
+        aria-hidden="true"
         className={cn(
           'mt-0.5 size-5 rounded shrink-0 border-2 flex items-center justify-center transition-all duration-150',
+          'peer-focus-visible:ring-2 peer-focus-visible:ring-[var(--accent)]',
           checked
             ? 'border-[var(--accent)] bg-[var(--accent)]'
             : 'border-[var(--border)] group-hover:border-[var(--accent)]'
         )}
-        onClick={() => onChange(!checked)}
       >
         {checked && <CheckCircle2 size={12} className="text-white" />}
-      </div>
+      </span>
       <span className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>{label}</span>
     </label>
   );
@@ -144,24 +145,35 @@ function CameraStep({ applicationId, onDone }: { applicationId: string; onDone: 
   const [permError, setPermError] = useState(false);
   const [captured, setCaptured] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
 
   useEffect(() => {
     let s: MediaStream | null = null;
+    let active = true;
+    setPermError(false);
     navigator.mediaDevices
       .getUserMedia({ video: true, audio: false })
       .then(ms => {
+        if (!active) {
+          ms.getTracks().forEach(t => t.stop());
+          return;
+        }
         s = ms;
         setStream(ms);
         if (videoRef.current) {
           videoRef.current.srcObject = ms;
         }
       })
-      .catch(() => setPermError(true));
+      .catch(() => {
+        if (active) setPermError(true);
+      });
 
     return () => {
+      active = false;
       s?.getTracks().forEach(t => t.stop());
     };
-  }, []);
+  }, [retryKey]);
 
   const capture = async () => {
     if (!videoRef.current || !canvasRef.current) return;
@@ -173,12 +185,15 @@ function CameraStep({ applicationId, onDone }: { applicationId: string; onDone: 
     canvas.toBlob(async blob => {
       if (!blob) return;
       setUploading(true);
+      setUploadError(false);
       try {
         await candidateApi.postSelfie(applicationId, blob);
         setCaptured(true);
       } catch {
-        // best-effort; don't block progress
-        setCaptured(true);
+        // A verification photo is required server-side (preflight_join gates the
+        // join on it), so we can't silently proceed — surface the failure and
+        // let the candidate retake it.
+        setUploadError(true);
       } finally {
         setUploading(false);
       }
@@ -197,16 +212,15 @@ function CameraStep({ applicationId, onDone }: { applicationId: string; onDone: 
         >
           <AlertTriangle size={24} className="mx-auto text-amber-400" />
           <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
-            Camera permission denied
+            Camera access needed
           </p>
           <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-            To use camera verification, allow camera access in your browser settings and refresh this page.
-            You can also continue without a selfie — the interview may still proceed.
+            A verification photo is required for this interview. Please allow camera access
+            in your browser settings, then try again.
           </p>
         </div>
-        <Button variant="outline" size="lg" className="w-full" onClick={onDone}>
-          Continue without camera
-          <ArrowRight size={16} />
+        <Button variant="outline" size="lg" className="w-full" onClick={() => setRetryKey(k => k + 1)}>
+          Try again
         </Button>
       </div>
     );
@@ -247,6 +261,12 @@ function CameraStep({ applicationId, onDone }: { applicationId: string; onDone: 
         </div>
       </div>
 
+      {uploadError && (
+        <p className="text-xs text-center text-amber-400">
+          Couldn't upload your photo. Please try taking it again.
+        </p>
+      )}
+
       {captured ? (
         <Button variant="primary" size="lg" className="w-full" onClick={onDone}>
           Continue
@@ -261,7 +281,7 @@ function CameraStep({ applicationId, onDone }: { applicationId: string; onDone: 
           disabled={!stream}
           onClick={capture}
         >
-          Take selfie
+          {uploadError ? 'Retake selfie' : 'Take selfie'}
         </Button>
       )}
     </div>
@@ -275,49 +295,63 @@ function ReadyStep({
   onJoinSuccess,
 }: {
   applicationId: string;
-  onJoinSuccess: () => void;
+  onJoinSuccess: (join: JoinOut) => void;
 }) {
   const [polling, setPolling] = useState(false);
   const [lkUnavailable, setLkUnavailable] = useState(false);
+  const [joinError, setJoinError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopPolling = () => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+    setPolling(false);
+  };
 
   const joinMutation = useMutation({
     mutationFn: () => candidateApi.join(applicationId),
-    onSuccess: () => {
-      // LiveKit token received — go to room (placeholder for now)
-      onJoinSuccess();
+    onSuccess: data => {
+      stopPolling();
+      onJoinSuccess(data);
     },
     onError: (err: unknown) => {
-      const axiosErr = err as { response?: { status?: number; data?: { code?: string; retry_after_s?: number } } };
-      if (axiosErr?.response?.status === 202) {
-        // Not ready yet — start polling
+      const axiosErr = err as {
+        response?: { status?: number; data?: { code?: string; retry_after_s?: number; message?: string } };
+      };
+      const status = axiosErr?.response?.status;
+      const data = axiosErr?.response?.data;
+      if (status === 202 && data?.retry_after_s != null) {
+        // Plan/agent not ready yet — poll on a *single* interval. Every failed
+        // poll re-enters onError, so guard against stacking new intervals.
+        setJoinError(null);
         setPolling(true);
-        const interval = axiosErr.response.data?.retry_after_s ?? 3;
-        pollRef.current = setInterval(() => {
-          joinMutation.mutate();
-        }, interval * 1000);
-      } else if (axiosErr?.response?.status === 500) {
-        const code = axiosErr.response.data?.code;
-        if (code === 'internal_error') {
-          setLkUnavailable(true);
+        if (!pollRef.current) {
+          pollRef.current = setInterval(() => joinMutation.mutate(), data.retry_after_s! * 1000);
         }
+      } else if (status === 500 || data?.code === 'internal_error') {
+        stopPolling();
+        setLkUnavailable(true);
+      } else {
+        // A blocking requirement (e.g. a missing consent/selfie returns 202
+        // not_ready *without* retry_after_s) or an unexpected error — stop and
+        // surface it rather than polling forever.
+        stopPolling();
+        setJoinError(
+          data?.message ??
+            "We couldn't start the interview. Please go back and make sure every step is complete.",
+        );
       }
     },
   });
 
-  // Cleanup polling
+  // Clear any poll interval on unmount.
   useEffect(() => {
-    if (!polling) return;
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [polling]);
-
-  useEffect(() => {
-    if (joinMutation.isSuccess && pollRef.current) {
-      clearInterval(pollRef.current);
-    }
-  }, [joinMutation.isSuccess]);
+  }, []);
 
   if (lkUnavailable) {
     return (
@@ -367,6 +401,10 @@ function ReadyStep({
         ))}
       </div>
 
+      {joinError && (
+        <p className="text-xs text-center text-amber-400">{joinError}</p>
+      )}
+
       {polling ? (
         <div className="flex flex-col items-center gap-3 py-4">
           <Spinner size={24} />
@@ -382,7 +420,7 @@ function ReadyStep({
           loading={joinMutation.isPending}
           onClick={() => joinMutation.mutate()}
         >
-          Join Interview
+          {joinError ? 'Try again' : 'Join Interview'}
           <ArrowRight size={16} />
         </Button>
       )}
@@ -443,9 +481,10 @@ export default function CandidateLobby() {
       {step === 2 && (
         <ReadyStep
           applicationId={applicationId!}
-          onJoinSuccess={() => {
-            // LiveKit room — placeholder for now
-            navigate(`/apply/${applicationId}/done?from=interview`);
+          onJoinSuccess={join => {
+            // Hand the LiveKit credentials to the interview room via router
+            // state so it can connect without a second /join round-trip.
+            navigate(`/apply/${applicationId}/interview`, { state: join });
           }}
         />
       )}

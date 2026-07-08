@@ -29,7 +29,7 @@ import {
   X,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { useToast } from '../../components/ui';
+import { useToast, Spinner } from '../../components/ui';
 import ConsoleLayout from './ConsoleLayout';
 import { copyToClipboard, getInterviewUrl } from './requisitionData';
 import {
@@ -133,6 +133,13 @@ const PLACEHOLDER_TYPES: FieldType[] = ['text', 'textarea', 'file', 'social'];
 
 let idCounter = 0;
 const nextId = () => `el-${++idCounter}`;
+
+// The backend echoes end_date as a UTC ISO string (e.g. "...T23:59:59+00:00"),
+// but <input type="datetime-local"> only accepts a naive "YYYY-MM-DDTHH:mm"
+// value — strip the offset/seconds rather than converting timezones, so the
+// digits round-trip unchanged through save/reload.
+const toDatetimeLocal = (iso: string | null | undefined): string =>
+  iso ? iso.replace(/(Z|[+-]\d{2}:\d{2})$/, '').slice(0, 16) : '';
 
 const makeField = (type: FieldType): ScreeningField => ({
   id: nextId(),
@@ -316,6 +323,20 @@ function ChipAutocomplete({
     }
   };
 
+  // Typed-but-unconfirmed text would otherwise sit in the input looking like
+  // a saved skill while never reaching the payload — commit it as a chip.
+  const commitPending = () => {
+    const pending = input.trim();
+    if (!pending) return;
+    const canonical = suggestions.find(s => s.toLowerCase() === query);
+    if (canonical) {
+      addChip(canonical);
+    } else {
+      onCreate(pending);
+      addChip(pending);
+    }
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
@@ -328,14 +349,8 @@ function ChipAutocomplete({
       e.preventDefault();
       if (open && rowCount > 0) {
         selectRow(active);
-      } else if (input.trim()) {
-        const canonical = suggestions.find(s => s.toLowerCase() === query);
-        if (canonical) {
-          addChip(canonical);
-        } else {
-          onCreate(input.trim());
-          addChip(input.trim());
-        }
+      } else {
+        commitPending();
       }
     } else if (e.key === 'Backspace' && input === '' && value.length > 0) {
       onChange(value.slice(0, -1));
@@ -375,7 +390,7 @@ function ChipAutocomplete({
           value={input}
           onChange={e => { setInput(e.target.value); setOpen(true); setHighlight(0); }}
           onFocus={() => setOpen(true)}
-          onBlur={() => { setOpen(false); onBlur?.(); }}
+          onBlur={() => { setOpen(false); commitPending(); onBlur?.(); }}
           onKeyDown={handleKeyDown}
           placeholder={value.length === 0 ? placeholder : undefined}
           className="flex-1 min-w-[160px] bg-transparent border-none p-0 py-1 text-body-md text-on-surface placeholder:text-on-surface-variant focus:outline-none focus:ring-0"
@@ -566,7 +581,7 @@ function BuilderForm({
   const [objective, setObjective] = useState(existing?.objective ?? '');
   const [skills, setSkills]       = useState<string[]>(existing?.technical_requirements ?? []);
   const [tone, setTone]           = useState<Tone>((existing?.tone as Tone) ?? 'technical');
-  const [endDate, setEndDate]     = useState(existing?.end_date ?? '');
+  const [endDate, setEndDate]     = useState(toDatetimeLocal(existing?.end_date));
   const [proctoringEnabled, setProctoringEnabled] = useState(existing?.proctoring_enabled ?? true);
   const [touched, setTouched]     = useState<Record<string, boolean>>({});
   const [attempted, setAttempted] = useState(false);
@@ -619,8 +634,22 @@ function BuilderForm({
     if (skills.length === 0) list.push('Add at least one must-have skill.');
     if (criteria.length < 3) list.push('Add at least 3 rubric criteria.');
     if (totalWeight !== 100) list.push('Rubric weightage must total 100%.');
+    if (criteria.some(c => !c.name.trim())) {
+      list.push('All rubric criteria must have a title.');
+    }
+    if (criteria.some(c => !c.description.trim())) {
+      list.push('All rubric criteria must have a description.');
+    }
+    if (criteria.some(c => !c.weight || c.weight <= 0)) {
+      list.push('Every rubric criterion needs a weight above 0%.');
+    }
     return list;
-  }, [jobTitle, domain, skills, criteria.length, totalWeight]);
+  }, [jobTitle, domain, skills, criteria, totalWeight]);
+
+  // Live comes from the saved status; draft vs offline tracks the current
+  // form's validation state, so the chip updates as errors are fixed.
+  const effectiveStatus: 'live' | 'draft' | 'offline' =
+    currentStatus === 'open' ? 'live' : errors.length > 0 ? 'draft' : 'offline';
 
   const showError = (field: string) => (touched[field] || attempted);
   const markTouched = (field: string) => setTouched(t => ({ ...t, [field]: true }));
@@ -784,8 +813,8 @@ function BuilderForm({
   return (
     <ConsoleLayout>
       {/* Header */}
-      <header className="h-14 border-b border-outline-variant bg-surface flex items-center justify-between px-5 sticky top-0 z-30">
-        <span className="label-mono text-on-surface-variant">Requisition Builder</span>
+      <header className="h-16 border-b border-outline-variant bg-surface flex items-center justify-between px-8 sticky top-0 z-30">
+        <span className="label-mono text-on-surface-variant m-[1em]">Requisition Builder</span>
         <span className="label-mono text-primary-fixed-dim">
           {jobTitle.trim() || 'Untitled Requisition'}
         </span>
@@ -796,7 +825,7 @@ function BuilderForm({
         <div className="w-full max-w-[1440px] flex flex-col border border-outline-variant">
           {/* Title block */}
           <div className="p-5 border-b border-outline-variant bg-surface-container-lowest">
-            <div className="mb-3 flex items-center justify-between">
+            <div className="mb-4 flex items-center justify-between">
               <Link
                 to="/console/requisitions"
                 className="h-9 px-3 border border-outline-variant text-on-surface-variant label-mono flex items-center gap-2 hover:bg-surface-container hover:text-on-surface transition-colors duration-150"
@@ -804,7 +833,7 @@ function BuilderForm({
                 <ArrowLeft size={14} />
                 ALL REQUISITIONS
               </Link>
-              {currentStatus === 'open' && (
+              {effectiveStatus === 'live' && (
                 <div
                   className="relative group px-3 py-1 label-mono text-xs flex items-center gap-2 select-none border border-[var(--emerald-chip-text)]/20 bg-[var(--emerald-chip-bg)] text-[var(--emerald-chip-text)] shrink-0 cursor-help"
                 >
@@ -825,7 +854,7 @@ function BuilderForm({
                   </div>
                 </div>
               )}
-              {currentStatus === 'draft' && (
+              {effectiveStatus === 'draft' && (
                 <div
                   className="relative group px-3 py-1 label-mono text-xs flex items-center gap-2 select-none border border-[var(--amber-chip-text)]/20 bg-[var(--amber-chip-bg)] text-[var(--amber-chip-text)] shrink-0 cursor-help"
                 >
@@ -834,30 +863,21 @@ function BuilderForm({
 
                   {/* Tooltip Overlay */}
                   <div className="absolute top-full right-0 mt-3 hidden group-hover:block bg-surface-container-high border border-outline-variant text-on-surface text-sm rounded-lg p-3 shadow-lg z-50 w-80 pointer-events-none normal-case tracking-normal">
-                    {errors.length > 0 ? (
-                      <>
-                        <p className="font-semibold text-body-md mb-2 text-error flex items-center gap-1.5">
-                          <AlertTriangle size={14} />
-                          Necessary steps to publish:
-                        </p>
-                        <ul className="list-disc pl-4 space-y-1.5 text-on-surface-variant text-sm">
-                          {errors.map((err, i) => (
-                            <li key={i}>{err}</li>
-                          ))}
-                        </ul>
-                      </>
-                    ) : (
-                      <p className="font-semibold text-body-md text-primary-fixed-dim flex items-center gap-1.5">
-                        <Check size={14} />
-                        All checks passed. Ready to deploy!
-                      </p>
-                    )}
+                    <p className="font-semibold text-body-md mb-2 text-error flex items-center gap-1.5">
+                      <AlertTriangle size={14} />
+                      Necessary steps to publish:
+                    </p>
+                    <ul className="list-disc pl-4 space-y-1.5 text-on-surface-variant text-sm">
+                      {errors.map((err, i) => (
+                        <li key={i}>{err}</li>
+                      ))}
+                    </ul>
                     {/* Arrow */}
                     <div className="absolute bottom-full right-6 w-3 h-3 bg-surface-container-high border-l border-t border-outline-variant rotate-45 -mb-1.5" />
                   </div>
                 </div>
               )}
-              {currentStatus !== 'open' && currentStatus !== 'draft' && (
+              {effectiveStatus === 'offline' && (
                 <div
                   className="relative group px-3 py-1 label-mono text-xs flex items-center gap-2 select-none border border-outline-variant bg-surface-container-lowest text-on-surface-variant shrink-0 cursor-help"
                 >
@@ -871,7 +891,8 @@ function BuilderForm({
                       Offline State
                     </p>
                     <p className="text-on-surface-variant text-sm">
-                      Requisition is ready to be made Live.
+                      All checks passed, but the requisition is not published yet. Deploy the
+                      interview to take it live.
                     </p>
                     {/* Arrow */}
                     <div className="absolute bottom-full right-6 w-3 h-3 bg-surface-container-high border-l border-t border-outline-variant rotate-45 -mb-1.5" />
@@ -879,7 +900,7 @@ function BuilderForm({
                 </div>
               )}
             </div>
-            <div className="flex flex-col xl:flex-row xl:items-start justify-between gap-4">
+            <div className="flex flex-col xl:flex-row xl:items-start justify-between gap-6">
               <div className="flex flex-col gap-2">
                 <h1 className="font-display text-headline-lg text-on-surface">
                   {isEditing ? 'Edit Requisition' : 'New Requisition'}
@@ -892,15 +913,38 @@ function BuilderForm({
                 </p>
               </div>
               {interviewUrl && (
-                <button
-                  type="button"
-                  onClick={handleCopyInterviewUrl}
-                  className="min-h-12 border border-primary-container bg-primary-container text-on-primary-container px-4 label-mono flex items-center justify-between gap-3 hover:bg-transparent hover:text-primary-fixed-dim transition-colors duration-150 w-full xl:w-72 shrink-0"
-                  title={interviewUrl}
-                >
-                  <span className="truncate">Copy Interview URL</span>
-                  {copiedInterviewUrl ? <Check size={16} /> : <Copy size={16} />}
-                </button>
+                <div className="flex flex-col gap-1.5 w-full xl:w-80 shrink-0">
+                  <span className="label-mono text-[10px] text-on-surface-variant">Interview Link</span>
+                  <div className="flex items-center border border-outline-variant bg-surface-container-lowest overflow-hidden transition-colors focus-within:border-primary-container">
+                    {/* Read-only URL display */}
+                    <div className="flex-1 px-3 py-2 text-xs font-mono text-on-surface-variant truncate select-all" title={interviewUrl}>
+                      {interviewUrl}
+                    </div>
+                    {/* Copy Button */}
+                    <button
+                      type="button"
+                      onClick={handleCopyInterviewUrl}
+                      className={cn(
+                        "h-9 px-3.5 border-l border-outline-variant label-mono flex items-center gap-1.5 transition-colors duration-150 shrink-0",
+                        copiedInterviewUrl 
+                          ? "bg-[var(--emerald-chip-bg)] text-[var(--emerald-chip-text)] border-[var(--emerald-chip-text)]/20" 
+                          : "bg-primary-container text-on-primary hover:bg-transparent hover:text-primary-fixed-dim"
+                      )}
+                    >
+                      {copiedInterviewUrl ? (
+                        <>
+                          COPIED
+                          <Check size={13} />
+                        </>
+                      ) : (
+                        <>
+                          COPY
+                          <Copy size={13} />
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
           </div>
@@ -945,15 +989,15 @@ function BuilderForm({
                 )}
               </div>
               <div className="flex flex-col gap-2">
-                <FieldLabel>End Date (Optional)</FieldLabel>
+                <FieldLabel>Close Date (Optional)</FieldLabel>
                 <input
-                  type="date"
+                  type="datetime-local"
                   value={endDate}
                   onChange={e => setEndDate(e.target.value)}
                   className={inputClasses(false)}
                 />
                 <span className="text-body-md text-on-surface-variant">
-                  The interview link automatically goes offline at the end of this day.
+                  The interview link automatically goes offline at this date and time.
                   Leave empty to keep it open until you pause or close the requisition.
                 </span>
               </div>
@@ -1368,9 +1412,17 @@ function BuilderForm({
                       value={c.name}
                       onChange={e => updateCriterion(c.id, { name: e.target.value })}
                       placeholder="e.g. Technical Proficiency"
-                      className="bg-transparent border-none p-0 flex-1 font-display text-body-lg text-on-surface focus:outline-none focus:ring-0 placeholder:text-on-surface-variant/40"
+                      className={cn(
+                        "bg-transparent p-0 pb-1 flex-1 font-display text-body-lg text-on-surface focus:outline-none placeholder:text-on-surface-variant/40 border-b",
+                        attempted && !c.name.trim()
+                          ? "border-error focus:border-error"
+                          : "border-transparent focus:border-primary"
+                      )}
                     />
                     <div className="flex items-center gap-4 shrink-0">
+                      <span className="label-mono text-primary-fixed-dim uppercase px-2 py-1 border border-primary-container bg-primary-container/10">
+                        Required
+                      </span>
                       <div className="flex items-center gap-2">
                         <span className="label-mono text-on-surface-variant text-body-sm">Weightage:</span>
                         <div className="relative flex items-center">
@@ -1449,7 +1501,7 @@ function BuilderForm({
       </div>
 
       {/* Save action bar */}
-      <div className="h-14 border-t border-outline-variant bg-surface-container-lowest flex justify-between items-center px-5 sticky bottom-0 z-30 shrink-0">
+      <div className="h-14 border-t border-outline-variant bg-surface-container-lowest flex justify-between items-center px-8 sticky bottom-0 z-30 shrink-0">
         <div className="flex items-center gap-2">
           {errors.length > 0 ? (
             <div className="relative group flex items-center gap-2 cursor-help">
@@ -1481,16 +1533,28 @@ function BuilderForm({
           <button
             type="button"
             onClick={handleSaveOffline}
-            className="label-mono text-on-surface uppercase border border-outline-variant px-5 py-2 hover:bg-surface-variant hover:text-error hover:border-error transition-colors duration-150"
+            disabled={saving || !jobTitle.trim() || !domain.trim()}
+            className={cn(
+              "label-mono text-on-surface uppercase border border-outline-variant px-5 py-2 hover:bg-surface-variant transition-colors duration-150 flex items-center gap-2",
+              saving || !jobTitle.trim() || !domain.trim() ? "opacity-50 cursor-not-allowed" : "hover:text-error hover:border-error"
+            )}
           >
-            {errors.length > 0 ? 'Save as Draft' : 'Save as Offline'}
+            {saving ? (
+              <>
+                Saving...
+                <Spinner size={14} className="text-on-surface" />
+              </>
+            ) : (
+              errors.length > 0 ? 'Save as Draft' : 'Save as Offline'
+            )}
           </button>
           <button
             type="button"
             onClick={handleDeploy}
+            disabled={saving || errors.length > 0}
             className={cn(
-              'label-mono text-on-primary bg-primary-container uppercase border border-primary-container px-5 py-2 transition-colors duration-150 flex items-center gap-2',
-              errors.length > 0 ? 'opacity-50 cursor-not-allowed' : 'hover:bg-transparent hover:text-primary-fixed-dim',
+              'label-mono text-white font-bold bg-primary-container uppercase border border-primary-container px-5 py-2 transition-colors duration-150 flex items-center gap-2',
+              errors.length > 0 || saving ? 'opacity-50 cursor-not-allowed' : 'hover:bg-transparent hover:text-primary-fixed-dim',
             )}
           >
             Deploy Interview
@@ -1518,6 +1582,18 @@ function BuilderForm({
               from { width: 100%; }
               to { width: 0%; }
             }
+            @keyframes spinClockwise {
+              from { transform: rotate(0deg); }
+              to { transform: rotate(360deg); }
+            }
+            @keyframes spinCounterClockwise {
+              from { transform: rotate(360deg); }
+              to { transform: rotate(0deg); }
+            }
+            @keyframes pulseGlow {
+              0%, 100% { transform: scale(0.85); opacity: 0.5; }
+              50% { transform: scale(1.15); opacity: 1; }
+            }
             .animate-fade-in {
               animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
             }
@@ -1529,6 +1605,15 @@ function BuilderForm({
             }
             .animate-countdown-progress {
               animation: countdown 6s linear forwards;
+            }
+            .animate-spin-slow {
+              animation: spinClockwise 8s linear infinite;
+            }
+            .animate-spin-reverse {
+              animation: spinCounterClockwise 3s linear infinite;
+            }
+            .animate-pulse-glow {
+              animation: pulseGlow 1.5s ease-in-out infinite;
             }
           `}} />
 
@@ -1549,11 +1634,17 @@ function BuilderForm({
           {/* Processing State */}
           {deployState === 'processing' && (
             <div className="relative text-center max-w-xl px-6 flex flex-col items-center animate-scale-up">
-              {/* Spinner Container */}
-              <div className="relative mb-8 w-20 h-20 flex items-center justify-center">
-                {/* Rotating ring */}
-                <div className="absolute inset-0 rounded-full border-4 border-outline-variant/30" />
-                <div className="absolute inset-0 rounded-full border-4 border-primary-container border-t-transparent animate-spin" />
+              {/* Custom Blueprint Loader */}
+              <div className="relative mb-8 w-24 h-24 flex items-center justify-center">
+                {/* Outer dashed ring */}
+                <div className="absolute inset-0 rounded-full border border-dashed border-outline-variant/60 animate-spin-slow" />
+                {/* Middle ring with gaps */}
+                <div className="absolute inset-3 rounded-full border border-double border-primary-container border-t-transparent border-b-transparent animate-spin-reverse" />
+                {/* Inner target circle */}
+                <div className="absolute inset-6 rounded-full border border-primary-fixed-dim/40 flex items-center justify-center">
+                  {/* Central pulsing core */}
+                  <div className="w-3 h-3 rounded-full bg-primary-container animate-pulse-glow shadow-[0_0_12px_rgba(46,91,255,0.6)]" />
+                </div>
               </div>
 
               {/* Title */}
@@ -1564,11 +1655,6 @@ function BuilderForm({
               {/* Subtitle */}
               <p className="text-on-surface-variant text-body-md mb-8 max-w-sm">
                 Configuring screening routes and deploying the interactive assessment workspace...
-              </p>
-
-              {/* API Route Status */}
-              <p className="text-[11px] text-primary-fixed-dim/40 font-mono tracking-wider uppercase">
-                {isEditing ? 'PUT' : 'POST'} /api/admin/console/requisitions{isEditing && existing ? `/${existing.id}` : ''}
               </p>
             </div>
           )}
@@ -1614,7 +1700,7 @@ function BuilderForm({
                 <div className="absolute top-0 bottom-0 left-0 bg-primary-container animate-countdown-progress" />
               </div>
               <p className="text-xs text-on-surface-variant/60 mt-2 font-mono">
-                Redirecting in a few seconds...
+                Redirecting to all requisitions page...
               </p>
             </div>
           )}

@@ -9,16 +9,19 @@ import { useQuery, useMutation } from '@tanstack/react-query';
 import { useState } from 'react';
 import { ArrowRight, AlertCircle, Clock, XCircle, Lock, ChevronRight } from 'lucide-react';
 import { publicApi, candidateApi } from '../../lib/api';
-import { setAuth, getToken } from '../../lib/auth';
+import { setAuth, clearAuth } from '../../lib/auth';
 import { Button, Spinner } from '../../components/ui';
 import type { DevUser, LinkResolveOut } from '../../lib/types';
 
 // Map reason codes to friendly messages
 function ErrorPanel({ reason }: { reason: string | null }) {
+  // Reason codes come from backend resolve() in backend/app/domain/links.py:
+  // {revoked, expired, maxed, requisition_closed, not_open_yet}. Unknown tokens
+  // resolve as `expired`. `invalid` is a frontend-only fallback.
   const messages: Record<string, { icon: React.ReactNode; title: string; body: string }> = {
     revoked:             { icon: <XCircle size={20} />,     title: 'Link revoked',       body: 'This invite link has been revoked by the recruiter.' },
-    expired:             { icon: <Clock size={20} />,       title: 'Link expired',       body: 'This invite link has passed its expiry date.' },
-    max_uses_reached:    { icon: <Lock size={20} />,        title: 'Link fully used',    body: 'This invite link has reached its maximum number of uses.' },
+    expired:             { icon: <Clock size={20} />,       title: 'Link expired',       body: 'This invite link has passed its expiry date or is no longer valid.' },
+    maxed:               { icon: <Lock size={20} />,        title: 'Link fully used',    body: 'This invite link has reached its maximum number of uses.' },
     requisition_closed:  { icon: <AlertCircle size={20} />, title: 'Position closed',    body: 'This position is no longer accepting applications.' },
     not_open_yet:        { icon: <Clock size={20} />,       title: 'Not open yet',       body: 'Applications for this role haven\'t opened yet.' },
     invalid:             { icon: <AlertCircle size={20} />, title: 'Invalid link',       body: 'This invite link doesn\'t exist or has been removed.' },
@@ -123,21 +126,50 @@ export default function CandidateLanding() {
     onSuccess: data => {
       routeByState(data.application_id, data.state, navigate);
     },
+    onError: err => {
+      const code = (err as { response?: { data?: { code?: string } } })?.response?.data?.code;
+      if (code === 'forbidden') {
+        // A non-candidate token (e.g. a recruiter/admin session left in
+        // localStorage) can't claim — drop it and let them pick a candidate.
+        clearAuth();
+        setShowPicker(true);
+      }
+    },
   });
 
-  const handleStart = () => {
-    // If we already have a candidate token in auth, just claim
-    const existing = getToken();
-    if (existing) {
-      claimMutation.mutate();
-      return;
+  // Extract a friendly message from a claim failure. The backend returns the
+  // standard envelope { code, message } (backend/app/core/errors.py); a link
+  // that lapsed between resolve and claim comes back as `link_invalid`.
+  const claimErrorMessage = (): string => {
+    const err = claimMutation.error as
+      | { response?: { data?: { code?: string; message?: string } } }
+      | undefined;
+    const data = err?.response?.data;
+    if (data?.code === 'link_invalid') {
+      return data.message || 'This link is no longer valid. Please request a new one.';
     }
+    if (data?.code === 'forbidden') {
+      return 'That account can’t apply — choose a candidate account below to continue.';
+    }
+    return 'Something went wrong. Please try again.';
+  };
+
+  const handleStart = () => {
+    // Dev flow: always show the account picker so a fresh run is one click away
+    // (no localStorage clearing). Picking resets that candidate's prior app.
     setShowPicker(true);
   };
 
-  const handlePickUser = (user: DevUser) => {
+  const handlePickUser = async (user: DevUser) => {
     setAuth(user);
     setShowPicker(false);
+    // Dev convenience: abandon any prior application for this link+candidate so
+    // every pick starts a brand-new interview instead of resuming to "Thank you".
+    try {
+      await publicApi.devReset(token!, user.email);
+    } catch {
+      /* best-effort — proceed even if reset is unavailable */
+    }
     claimMutation.mutate();
   };
 
@@ -233,7 +265,7 @@ export default function CandidateLanding() {
 
         {claimMutation.isError && (
           <p className="text-xs text-center text-red-400">
-            Something went wrong. Please try again.
+            {claimErrorMessage()}
           </p>
         )}
       </div>

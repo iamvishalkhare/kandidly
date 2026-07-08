@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { ChevronRight } from 'lucide-react';
@@ -14,6 +14,8 @@ import CandidateLanding  from './pages/candidate/Landing';
 import CandidateForm     from './pages/candidate/Form';
 import CandidateLobby    from './pages/candidate/Lobby';
 import CandidateDone     from './pages/candidate/Done';
+// Lazy-loaded so the heavy livekit-client bundle only loads on the interview route.
+const CandidateInterview = lazy(() => import('./pages/candidate/Interview'));
 import ConsoleDashboard  from './pages/console/Dashboard';
 import ConsoleInterviews from './pages/console/Interviews';
 import InterviewReview from './pages/console/InterviewReview';
@@ -139,6 +141,7 @@ function AppInner() {
   }
 
   return (
+    <Suspense fallback={<div className="min-h-screen" style={{ background: 'var(--background)' }} />}>
     <Routes>
       {/* Marketing (public-facing) */}
       <Route path="/" element={<Marketing />} />
@@ -153,12 +156,14 @@ function AppInner() {
 
       {/* Candidate (public-facing) */}
       <Route path="/i/:token"                   element={<CandidateLanding />} />
-      <Route path="/apply/:applicationId/form"  element={<CandidateForm />} />
-      <Route path="/apply/:applicationId/lobby" element={<CandidateLobby />} />
-      <Route path="/apply/:applicationId/done"  element={<CandidateDone />} />
+      <Route path="/apply/:applicationId/form"      element={<CandidateForm />} />
+      <Route path="/apply/:applicationId/lobby"     element={<CandidateLobby />} />
+      <Route path="/apply/:applicationId/interview" element={<CandidateInterview />} />
+      <Route path="/apply/:applicationId/done"      element={<CandidateDone />} />
 
       <Route path="*" element={<NotFound />} />
     </Routes>
+    </Suspense>
   );
 }
 
