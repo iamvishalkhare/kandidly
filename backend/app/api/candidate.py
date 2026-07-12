@@ -4,7 +4,8 @@ api/candidate_proctor.py under Phase 4."""
 
 from __future__ import annotations
 
-from datetime import UTC
+import json
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
@@ -34,6 +35,7 @@ from app.db.models import (
 from app.domain import applications as apps
 from app.domain.forms import validate_submission
 from app.domain.links import resolve
+from app.domain.plan import ensure_interview_capacity
 from app.schemas.api import (
     ApplicationOut,
     ClaimOut,
@@ -41,6 +43,7 @@ from app.schemas.api import (
     FormPatchIn,
     FormSubmitOut,
     JoinOut,
+    RecordingCompleteIn,
 )
 
 router = APIRouter(prefix="/api/candidate", tags=["candidate"])
@@ -70,6 +73,10 @@ async def claim(
 
     if link.kind == "personal" and (link.email or "").lower() != user.email.lower():
         raise AppError("forbidden", "This invite is for a different email")
+
+    # Free-plan hold: once the org's cumulative interview count hits the
+    # threshold, every new attempt is refused with ER0402 (402).
+    await ensure_interview_capacity(db, requisition.org_id)
 
     # Idempotent re-entry: return the existing live application if any.
     existing = await apps.find_live_application(db, requisition.id, user.user_id)
@@ -219,6 +226,13 @@ async def submit_form(
         if candidate is not None and candidate.display_name is None:
             candidate.display_name = full_name.strip()
 
+    # Free-plan hold re-check at the point the Interview row is actually
+    # created — a claim that slipped in under the threshold must not push the
+    # org past it later.
+    requisition = await db.get(Requisition, app.requisition_id)
+    if requisition is not None:
+        await ensure_interview_capacity(db, requisition.org_id)
+
     # Create the interview row (status 'created', room name) — SPEC §8.2.
     seq = (await db.execute(sa_text("SELECT nextval('interview_code_seq')"))).scalar_one()
     interview = Interview(
@@ -235,6 +249,24 @@ async def submit_form(
 
     await apps.transition(db, app.id, "form_submitted", "candidate")
     await enqueue("generate_plan", str(interview.id))
+    # Scrape the candidate's GitHub / site / blog links; generate_plan waits for
+    # this and folds the digest into the seed questions (SPEC §8.6).
+    await enqueue("enrich_sources", str(interview.id))
+
+    # Cache a PARTIAL context bundle (form + requisition) in Redis now, so it's
+    # there the instant the candidate submits; the background pipeline fills in
+    # resume/scraped/plan and flips it to "ready" (interview_context.py).
+    from app.domain.interview_context import assemble_context, cache_context
+
+    req = await db.get(Requisition, app.requisition_id)
+    partial = assemble_context(
+        req=req,
+        submission=submission,
+        field_hints=(template.field_hints if template else {}),  # type: ignore
+        plan_nodes=None,
+        status="partial",
+    )
+    await cache_context(interview.id, partial)
     return FormSubmitOut(interview_id=interview.id)
 
 
@@ -310,8 +342,11 @@ async def upload_snapshot(
     interview_id: UUID,
     image: UploadFile = File(...),
     captured_at: str = Form(...),
-    faces_detected: int = Form(default=0),
-    face_present: bool = Form(default=False),
+    # None (not 0/False) when the browser does no local face detection —
+    # derive_snapshot_events treats absent values as neutral, so a plain
+    # capture loop doesn't falsely trip no_face_sustained.
+    faces_detected: int | None = Form(default=None),
+    face_present: bool | None = Form(default=None),
     user: AuthUser = Depends(require_candidate),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
@@ -378,6 +413,95 @@ async def post_proctor_events(
         events=body.get("events") or [],
     )
     return {"accepted": accepted}
+
+
+# --- interview recording ingest (docs/ARTIFACTS.md) -------------------------
+# The browser records mixed mic+agent audio with MediaRecorder and uploads
+# ~15s chunks; on end it posts /recording/complete which enqueues the
+# process_recording job (concat → transcode → waveform peaks).
+_RECORDING_GRACE_S = 180  # accept trailing chunks shortly after the interview ends
+_MAX_CHUNK_BYTES = 8 * 1024 * 1024
+_CHUNK_MIME_EXT = {
+    "audio/webm": "webm",
+    "video/webm": "webm",
+    "audio/mp4": "mp4",
+    "audio/ogg": "ogg",
+}
+
+
+def _recording_window_open(interview: Interview) -> bool:
+    # Status alone is not enough: the agent flips ended→finalized within
+    # seconds while the browser's final chunk + complete call arrive after.
+    if interview.status in ("live", "paused", "wrap_up"):
+        return True
+    if interview.ended_at is not None:
+        return (datetime.now(UTC) - interview.ended_at).total_seconds() <= _RECORDING_GRACE_S
+    return False
+
+
+@router.post(
+    "/interviews/{interview_id}/recording/chunks",
+    dependencies=[rate_limit("recording_chunks", 60)],
+)
+async def upload_recording_chunk(
+    interview_id: UUID,
+    chunk: UploadFile = File(...),
+    seq: int = Form(...),
+    user: AuthUser = Depends(require_candidate),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.domain import proctoring
+
+    interview, app = await _owned_interview(db, interview_id, user)
+    if not _recording_window_open(interview):
+        raise AppError("conflict", "Interview is not accepting recording chunks")
+    await proctoring.require_consent(db, app.id)
+
+    data = await chunk.read()
+    if len(data) > _MAX_CHUNK_BYTES:
+        raise AppError("validation_error", "Recording chunk too large", status_code=413)
+    content_type = (chunk.content_type or "").split(";", 1)[0].strip().lower()
+    ext = _CHUNK_MIME_EXT.get(content_type, "bin")
+    # Transient objects — no StoredFile rows; process_recording deletes them.
+    await storage.put_object(
+        storage.BUCKET_RECORDINGS,
+        storage.recording_chunk_key(interview_id, seq, ext),
+        data,
+        content_type or "application/octet-stream",
+    )
+    return {"ok": True, "seq": seq}
+
+
+@router.post("/interviews/{interview_id}/recording/complete")
+async def complete_recording(
+    interview_id: UUID,
+    body: RecordingCompleteIn,
+    user: AuthUser = Depends(require_candidate),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.domain import proctoring
+
+    interview, app = await _owned_interview(db, interview_id, user)
+    if interview.audio_recording_id is not None:
+        return {"ok": True}  # already finalized — idempotent
+    if not _recording_window_open(interview):
+        raise AppError("conflict", "Interview is not accepting recording data")
+    await proctoring.require_consent(db, app.id)
+
+    manifest = {
+        "chunks": body.chunks,
+        "started_at": body.started_at.isoformat(),
+        "mime": body.mime,
+        "completed_at": datetime.now(UTC).isoformat(),
+    }
+    await storage.put_object(
+        storage.BUCKET_RECORDINGS,
+        storage.recording_manifest_key(interview_id),
+        json.dumps(manifest).encode(),
+        "application/json",
+    )
+    await enqueue("process_recording", str(interview_id))
+    return {"ok": True}
 
 
 # --- join (SPEC §8.2, §12.2 #10) -------------------------------------------

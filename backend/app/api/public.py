@@ -19,8 +19,7 @@ router = APIRouter(prefix="/api/public", tags=["public"])
 @router.get("/config", response_model=ConfigOut)
 async def get_config() -> ConfigOut:
     return ConfigOut(
-        snapshot_min_s=settings.snapshot_min_s,
-        snapshot_max_s=settings.snapshot_max_s,
+        snapshot_interval_s=settings.snapshot_interval_s,
         livekit_url=settings.livekit_url,
         recaptcha_site_key=settings.recaptcha_site_key,
     )
@@ -32,6 +31,7 @@ async def dev_users(db: AsyncSession = Depends(get_db)) -> list[dict]:
     the web app can offer a role switcher. 404s outside AUTH_DEV_MODE."""
     import base64
     import json
+    from datetime import UTC, datetime
 
     from sqlalchemy import select as sa_select
 
@@ -43,7 +43,14 @@ async def dev_users(db: AsyncSession = Depends(get_db)) -> list[dict]:
     users = (await db.execute(sa_select(User).order_by(User.role, User.email))).scalars().all()
     out = []
     for u in users:
-        payload = {"user_id": str(u.id), "email": u.email, "role": u.role}
+        # `iat` makes each issued token unique, so revoking one at logout
+        # (auth denylist) doesn't lock the dev user out of the next login.
+        payload = {
+            "user_id": str(u.id),
+            "email": u.email,
+            "role": u.role,
+            "iat": datetime.now(UTC).isoformat(),
+        }
         token = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
         out.append({"email": u.email, "role": u.role, "token": token})
     return out

@@ -503,10 +503,20 @@ export default function CandidateForm() {
   // Distinguish a bot-check rejection from a generic submit failure.
   const submitErrorMessage = (): string => {
     const err = submitMutation.error as
-      | { response?: { data?: { code?: string } } }
+      | {
+          response?: {
+            data?: { code?: string; message?: string; detail?: { error_code?: string } };
+          };
+        }
       | undefined;
-    if (err?.response?.data?.code === 'captcha_failed') {
+    const data = err?.response?.data;
+    if (data?.code === 'captcha_failed') {
       return "Couldn't verify you're human. Please try submitting again.";
+    }
+    if (data?.code === 'plan_limit') {
+      // Free-plan hold (backend app/domain/plan.py) — surface the error code.
+      const code = data.detail?.error_code ?? 'ER0402';
+      return `${data.message || 'This interview is on hold. Please contact your recruiter for more details.'} (Error code: ${code})`;
     }
     return 'Submission failed. Please try again.';
   };

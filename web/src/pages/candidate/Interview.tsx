@@ -21,8 +21,8 @@ import {
   type RemoteTrackPublication,
   type RemoteParticipant,
 } from 'livekit-client';
-import { Mic, MicOff, PhoneOff, Volume2, WifiOff, AlertTriangle } from 'lucide-react';
-import { candidateApi } from '../../lib/api';
+import { Mic, MicOff, PhoneOff, Volume2, WifiOff, AlertTriangle, CameraOff, X } from 'lucide-react';
+import { candidateApi, publicApi } from '../../lib/api';
 import { Button, Spinner } from '../../components/ui';
 import { cn } from '../../lib/utils';
 import type { JoinOut } from '../../lib/types';
@@ -31,6 +31,14 @@ import {
   formatRemaining,
   type InterviewMessage,
 } from '../../lib/interviewChannel';
+import { createInterviewRecorder, type InterviewRecorder } from '../../lib/useInterviewRecorder';
+import { startSnapshotLoop, type SnapshotLoop } from '../../lib/useProctorSnapshots';
+
+/** Interview id from the LiveKit room name (`kndl-{interview_id}`) — the
+ * JoinOut carries no explicit id; this mirrors the agent's convention. */
+function interviewIdFromRoom(roomName: string | undefined): string | null {
+  return roomName?.startsWith('kndl-') ? roomName.slice('kndl-'.length) : null;
+}
 
 type Phase =
   | 'acquiring'   // fetching a join token
@@ -68,12 +76,21 @@ export default function CandidateInterview() {
   const [partial, setPartial] = useState<{ speaker: string; text: string } | null>(null);
   const [micEnabled, setMicEnabled] = useState(true);
   const [needsAudioGesture, setNeedsAudioGesture] = useState(false);
+  const [cameraBanner, setCameraBanner] = useState(false);
 
   const roomRef = useRef<Room | null>(null);
   const audioElsRef = useRef<HTMLAudioElement[]>([]);
   const transcriptRef = useRef<HTMLDivElement>(null);
+  const recorderRef = useRef<InterviewRecorder | null>(null);
+  const snapshotsRef = useRef<SnapshotLoop | null>(null);
 
   const leave = useCallback(() => {
+    // Kick off the recording flush before navigating; the SPA keeps the JS
+    // context alive so pending chunk uploads and /recording/complete finish.
+    void recorderRef.current?.stop();
+    recorderRef.current = null;
+    snapshotsRef.current?.stop();
+    snapshotsRef.current = null;
     setPhase('ended');
     navigate(`/apply/${applicationId}/done?from=interview`, { replace: true });
   }, [applicationId, navigate]);
@@ -164,6 +181,8 @@ export default function CandidateInterview() {
       audioElsRef.current.push(el);
       // Browsers may block autoplay without a gesture — prompt if so.
       el.play?.().catch(() => setNeedsAudioGesture(true));
+      // Mix the agent's audio into the interview recording (best-effort).
+      if (track.mediaStreamTrack) recorderRef.current?.addTrack(track.mediaStreamTrack);
     };
 
     const handlePlaybackChanged = () => {
@@ -185,6 +204,35 @@ export default function CandidateInterview() {
         setMicEnabled(true);
         setNeedsAudioGesture(!room.canPlaybackAudio);
         setPhase('live');
+
+        // Recording + proctoring are best-effort side channels: any failure
+        // here must never break the live call.
+        const interviewId = interviewIdFromRoom(joinData.room_name);
+        if (interviewId) {
+          try {
+            const micTrack = room.localParticipant.getTrackPublication(Track.Source.Microphone)
+              ?.track?.mediaStreamTrack;
+            if (micTrack && !recorderRef.current) {
+              recorderRef.current = createInterviewRecorder(interviewId);
+              recorderRef.current?.addTrack(micTrack);
+              // The agent's track may have arrived before the recorder existed.
+              audioElsRef.current.forEach(el => {
+                const stream = el.srcObject as MediaStream | null;
+                stream?.getAudioTracks().forEach(t => recorderRef.current?.addTrack(t));
+              });
+            }
+          } catch {
+            /* recording is best-effort */
+          }
+          if (!snapshotsRef.current) {
+            const cfg = await publicApi.getConfig().catch(() => null);
+            if (cancelled) return;
+            snapshotsRef.current = startSnapshotLoop(interviewId, {
+              intervalS: cfg?.snapshot_interval_s ?? 10,
+              onCameraDenied: () => setCameraBanner(true),
+            });
+          }
+        }
       } catch {
         if (!cancelled) setPhase('error');
       }
@@ -195,6 +243,10 @@ export default function CandidateInterview() {
       room.removeAllListeners();
       room.disconnect();
       roomRef.current = null;
+      void recorderRef.current?.stop();
+      recorderRef.current = null;
+      snapshotsRef.current?.stop();
+      snapshotsRef.current = null;
       audioElsRef.current.forEach(el => {
         el.srcObject = null;
         el.remove();
@@ -317,6 +369,24 @@ export default function CandidateInterview() {
           <Volume2 size={15} />
           Tap to enable interview audio
         </button>
+      )}
+
+      {/* Camera unavailable banner — proctoring degrades, interview continues */}
+      {cameraBanner && (
+        <div
+          className="flex items-center justify-center gap-2 py-2.5 px-4 text-sm w-full"
+          style={{ background: 'rgba(245,158,11,0.08)', color: '#fbbf24' }}
+        >
+          <CameraOff size={15} />
+          <span>Camera unavailable — this session will be flagged for manual review.</span>
+          <button
+            onClick={() => setCameraBanner(false)}
+            aria-label="Dismiss camera notice"
+            className="ml-2 opacity-70 hover:opacity-100"
+          >
+            <X size={14} />
+          </button>
+        </div>
       )}
 
       {/* Center: agent orb + speaking status */}

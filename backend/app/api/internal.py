@@ -57,6 +57,17 @@ async def bootstrap(interview_id: UUID, db: AsyncSession = Depends(get_db)) -> d
     req = await db.get(Requisition, interview.requisition_id)
     if req is not None:
         req_config = req.interview_config
+
+    # Interview context bundle — read the Redis cache, rebuild from Postgres on a
+    # miss (cold cache / expired TTL). This is the "fetch from Redis at room load"
+    # fast path; the agent uses it for candidate-specific follow-ups.
+    from app.domain.interview_context import get_cached_context, rebuild_context
+
+    context = await get_cached_context(interview_id)
+    if context is None:
+        context = await rebuild_context(db, interview_id)
+    context = context or {}
+
     return {
         "interview": {
             "id": str(interview.id),
@@ -82,9 +93,10 @@ async def bootstrap(interview_id: UUID, db: AsyncSession = Depends(get_db)) -> d
             for n in nodes
         ],
         "config": req_config,
-        "candidate_display_name": None,  # resolved from users/resume in full impl
-        "resume_summary": None,
-        "form_digest": None,
+        "candidate_display_name": context.get("candidate_display_name"),
+        "resume_summary": context.get("resume"),
+        "form_digest": context.get("form"),
+        "context": context,
         "application_id": str(app.id) if app else None,
     }
 

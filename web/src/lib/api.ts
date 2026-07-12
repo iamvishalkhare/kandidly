@@ -90,6 +90,15 @@ export const publicApi = {
   },
 };
 
+// ─── Auth ──────────────────────────────────────────────────────────────────────
+
+export const authApi = {
+  /** Revokes the current bearer token server-side (Redis denylist + audit). */
+  logout: async (): Promise<void> => {
+    await api.post('/api/auth/logout');
+  },
+};
+
 // ─── Candidate ─────────────────────────────────────────────────────────────────
 
 export const candidateApi = {
@@ -133,8 +142,45 @@ export const candidateApi = {
     return data;
   },
   join: async (id: string): Promise<JoinOut> => {
-    const { data } = await api.post<JoinOut>(`/api/candidate/applications/${id}/join`);
+    // 202 = "not ready yet" (agent/plan still provisioning). axios treats 2xx as
+    // success, so reject 202 explicitly → the caller's catch polls with retry_after_s
+    // instead of connecting with an empty token.
+    const { data } = await api.post<JoinOut>(`/api/candidate/applications/${id}/join`, undefined, {
+      validateStatus: s => s >= 200 && s < 300 && s !== 202,
+    });
     return data;
+  },
+
+  // Interview recording (browser MediaRecorder chunks; docs/ARTIFACTS.md)
+  uploadRecordingChunk: async (interviewId: string, seq: number, blob: Blob): Promise<void> => {
+    const fd = new FormData();
+    fd.append('chunk', blob, `chunk-${seq}`);
+    fd.append('seq', String(seq));
+    await api.post(`/api/candidate/interviews/${interviewId}/recording/chunks`, fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+  completeRecording: async (
+    interviewId: string,
+    body: { chunks: number; started_at: string; mime: string },
+  ): Promise<void> => {
+    await api.post(`/api/candidate/interviews/${interviewId}/recording/complete`, body);
+  },
+
+  // Proctoring ingest during the live interview
+  uploadSnapshot: async (interviewId: string, blob: Blob, capturedAt: string): Promise<void> => {
+    const fd = new FormData();
+    fd.append('image', blob, 'frame.webp');
+    fd.append('captured_at', capturedAt);
+    await api.post(`/api/candidate/interviews/${interviewId}/snapshots`, fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+  postProctorEvents: async (
+    interviewId: string,
+    events: Array<{ type: string; client_ts: string; payload?: Record<string, unknown> }>,
+  ): Promise<void> => {
+    await api.post(`/api/candidate/interviews/${interviewId}/proctor-events`, { events });
   },
 };
 

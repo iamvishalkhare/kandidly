@@ -119,7 +119,7 @@ async def _call_llm(system_prompt: str, user_message: str) -> str:
 
     from app.llm.clients import ensure_provider_env
 
-    ensure_provider_env()  # 503 with a clear message when no key is set
+    ensure_provider_env(settings.realtime_llm)  # 503 with a clear message when no key is set
     agent = Agent(settings.realtime_llm, system_prompt=system_prompt)
     result = await agent.run(user_message)
     out = getattr(result, "output", None) or getattr(result, "data", None)

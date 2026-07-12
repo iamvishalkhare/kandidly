@@ -57,6 +57,63 @@ def _export_livekit_env() -> None:
         os.environ.setdefault("LIVEKIT_API_SECRET", config.livekit_api_secret)
 
 
+def _background_section(ctx: dict) -> str:
+    """Format the cached interview context (resume + scraped sources + requisition
+    + key answers) into a compact briefing the interviewer uses for sharp,
+    candidate-specific follow-ups. Returns "" when there's nothing useful."""
+    if not ctx:
+        return ""
+    lines: list[str] = []
+
+    req = ctx.get("requisition") or {}
+    if req.get("title"):
+        role = req["title"] + (f" · {req['domain']}" if req.get("domain") else "")
+        lines.append(f"Role: {role}.")
+    if req.get("role_objective"):
+        lines.append(f"Role objective: {req['role_objective']}")
+
+    name = ctx.get("candidate_display_name")
+    if name:
+        lines.append(f"Candidate: {name}.")
+
+    for s in ctx.get("sources") or []:
+        if s.get("status") != "done":
+            continue
+        gh, dig = s.get("github") or {}, s.get("digest") or {}
+        if gh:
+            repos = ", ".join(r["name"] for r in (gh.get("top_repos") or [])[:4] if r.get("name"))
+            bio = f" Bio: {gh['bio']}." if gh.get("bio") else ""
+            lines.append(f"GitHub (@{gh.get('login')}):{bio}" + (f" Repos: {repos}." if repos else ""))
+        elif dig:
+            tech = ", ".join(dig.get("technologies") or [])
+            lines.append(
+                f"{s.get('kind', 'source').capitalize()} ({s.get('url')}): {dig.get('summary', '')}"
+                + (f" Tech: {tech}." if tech else "")
+            )
+        elif s.get("text"):
+            lines.append(f"{s.get('kind', 'source').capitalize()} ({s.get('url')}): {s['text'][:300]}")
+
+    key_answers = [
+        f"{k}: {(v or {}).get('value')}"
+        for k, v in (ctx.get("form") or {}).items()
+        if (v or {}).get("role") in ("seed_topic", "context") and (v or {}).get("value")
+    ]
+    if key_answers:
+        lines.append("Application highlights: " + " | ".join(key_answers[:4]) + ".")
+
+    resume_md = (ctx.get("resume") or "").strip()
+    if not lines and not resume_md:
+        return ""
+    body = "\n".join(f"- {ln}" for ln in lines)
+    out = (
+        "\n# Candidate background (use to personalize and ask sharp, specific "
+        f"follow-ups; never read this aloud verbatim)\n{body}\n"
+    )
+    if resume_md:
+        out += f"\n## Candidate resume (Markdown)\n{resume_md}\n"
+    return out
+
+
 def _build_instructions(boot: dict) -> str:
     """Assemble the interviewer system prompt from the bootstrapped plan."""
     nodes = boot.get("nodes") or []
@@ -74,6 +131,7 @@ def _build_instructions(boot: dict) -> str:
             "How do you debug a tricky production issue under time pressure?",
         ]
     q_lines = "\n".join(f"{i + 1}. {q}" for i, q in enumerate(questions))
+    background = _background_section(boot.get("context") or {})
     return f"""You are Kandidly, a warm, professional AI voice interviewer running a short spoken screening interview.
 
 # Speaking style (text-to-speech)
@@ -84,10 +142,11 @@ def _build_instructions(boot: dict) -> str:
 
 # Interview plan — cover these topics in order
 {q_lines}
-
+{background}
 # Flow
 - Open by greeting the candidate, introducing yourself as Kandidly in one sentence, and saying this is a short voice screening. Then ask the first question.
 - Work through the topics in order with natural transitions. Do not dump all questions at once.
+- Budget your time so EVERY topic above gets asked before the interview ends — the candidate is scored on each one, and a topic never asked scores zero. If time is running short, move on and ask one brief, targeted question per remaining topic instead of going deeper on the current one.
 - When the topics are covered, thank the candidate warmly, tell them the hiring team will be in touch, and then stop talking.
 """
 

@@ -142,11 +142,20 @@ export default function CandidateLanding() {
   // that lapsed between resolve and claim comes back as `link_invalid`.
   const claimErrorMessage = (): string => {
     const err = claimMutation.error as
-      | { response?: { data?: { code?: string; message?: string } } }
+      | {
+          response?: {
+            data?: { code?: string; message?: string; detail?: { error_code?: string } };
+          };
+        }
       | undefined;
     const data = err?.response?.data;
     if (data?.code === 'link_invalid') {
       return data.message || 'This link is no longer valid. Please request a new one.';
+    }
+    if (data?.code === 'plan_limit') {
+      // Free-plan hold (backend app/domain/plan.py) — surface the error code.
+      const code = data.detail?.error_code ?? 'ER0402';
+      return `${data.message || 'This interview is on hold. Please contact your recruiter for more details.'} (Error code: ${code})`;
     }
     if (data?.code === 'forbidden') {
       return 'That account can’t apply — choose a candidate account below to continue.';

@@ -71,3 +71,52 @@ cd web && npm run dev            # native Vite on :5173 (backend :8000). The web
 - Remove the temporary `await asyncio.sleep(3)` in `app/api/console.py` deploy/update endpoints (leftover from splash-screen testing).
 - Commit this work (it's all uncommitted on `main`).
 - Consider proper candidate auth (currently dev-picker only; WorkOS is the planned path).
+
+---
+
+# Follow-up session (2026-07-09, later) — reCAPTCHA + interview context enrichment
+
+_Two features added after the notes above. **#1 reCAPTCHA is COMMITTED (`037a2e5` on `main`); #2 enrichment is UNCOMMITTED.** The original candidate-flow + voice-interview work above was also committed as part of `037a2e5`._
+
+## 1. reCAPTCHA v3 on the screening-form submit — COMMITTED (`037a2e5`)
+
+Anti-bot/DDoS gate on `POST /api/candidate/applications/{id}/form/submit` (the costly step: creates the `Interview` + enqueues `generate_plan`).
+
+- **Backend:** `app/core/captcha.py` — `require_captcha("form_submit")` dependency (mirrors `app/core/ratelimit.py`). Reads the `X-Recaptcha-Token` header, POSTs Google `siteverify`, enforces `success` + `action` + `score >= KANDIDLY_RECAPTCHA_MIN_SCORE` (default 0.5). New error code `captcha_failed` → 403 (`app/core/errors.py`). Wired into `submit_form` via `dependencies=[...]`.
+- **Degrades open:** when `KANDIDLY_RECAPTCHA_SECRET_KEY` is empty, verification is **skipped** (dev parity with the fail-open rate limiter); a siteverify network error also fails open; an explicit `success:false` fails closed.
+- **Frontend:** site key served via `/api/public/config` (`ConfigOut.recaptcha_site_key`); `web/src/lib/recaptcha.ts` (invisible v3 loader/executor); `Form.tsx` mints a token on submit → `candidateApi.submitForm(id, token)` sets the header; shows a friendly message on `captcha_failed`.
+- **Env:** `KANDIDLY_RECAPTCHA_SITE_KEY` / `_SECRET_KEY` / `_MIN_SCORE` in `infra/.env` (+ `.env.example`, `compose.yml` `x-backend-env`). **The user set REAL keys in `infra/.env`, so enforcement is currently ON** — headless/API submits without a valid v3 token now 403. Get keys from the reCAPTCHA admin console; `localhost` must be an allowed domain.
+
+## 2. Interview context enrichment — UNCOMMITTED
+
+**Goal:** at form submit, assemble a rich context bundle (form answers + parsed resume + **scraped GitHub/site/blog** + requisition details) and cache it in Redis so the agent asks sharper, candidate-specific questions/follow-ups at room-load.
+
+**Pipeline (`submit → room load`):**
+```
+submit_form ─► cache PARTIAL bundle in Redis now (form + requisition, sync)
+          ├─► enqueue enrich_sources   (scrape → summarize → persist enrichment)
+          └─► enqueue generate_plan    (waits resume+enrichment, folds sources
+                                        into the plan LLM, caches FULL bundle "ready")
+room load ─► agent bootstrap ─► reads Redis (rebuilds from Postgres on a miss)
+                              ─► _build_instructions adds "Candidate background"
+```
+
+**Where things live:**
+- **Scraper** `app/domain/enrichment.py`: `select_sources(answers, field_hints)` picks URLs by `field_hints` role (`github_url`/`portfolio_url`/`blog_url`) with a URL auto-detect fallback; `scrape_sources()` — GitHub via REST API, sites via `httpx` + **BeautifulSoup** (lazy `from bs4 import ...`), **SSRF-guarded** (public IPs only), LLM-summarize (`source_summarizer()` + `enrich_v1.md` + `SourceDigest`) else `text_only`. **Best-effort, never raises.**
+- **Cache/assembly** `app/core/cache.py` (Redis JSON) + `app/domain/interview_context.py` (`assemble_context` / `cache_context` / `get_cached_context` / `rebuild_context`). Redis key `interview:context:{interview_id}`, TTL 24h.
+- **Job** `app/jobs/enrichment.py::enrich_sources` (registered in `app/jobs/worker.py`).
+- **Plan** `app/jobs/planning.py`: `_wait_for_resume` → **`_wait_for_inputs`** (awaits resume AND enrichment terminal); `_sources_digest()` feeds `{sources_json}` into `plan_v1.md`; caches the full bundle after `write_plan`.
+- **Bootstrap** `app/api/internal.py`: reads Redis (rebuilds from PG on miss), fills the previously-`None` `candidate_display_name`/`resume_summary`/`form_digest` and adds a `context` object.
+- **Agent** `agent/worker.py`: `_background_section(ctx)` → "Candidate background" block in `_build_instructions`.
+
+**Data model:** `form_submissions.enrichment` (JSONB) + `enrichment_status` — **migration `0006_add_submission_enrichment.py`** (already applied to the dev DB). Shape: `{"sources":[{kind,url,status,mode,digest|text,github?,fetched_at}]}`.
+
+**URL role tagging:** roles live in `FormTemplate.field_hints` (`{key:{use_in_plan,role}}`). Seeded `github` field tagged `role: github_url` in `app/db/seed.py FIELD_HINTS`. Fallback auto-detect handles untagged templates.
+
+**Deps/infra:** added `beautifulsoup4` to `backend/pyproject.toml`; **root `uv.lock` regenerated** (`uv lock`) and **backend + worker images rebuilt** (bs4 baked in). Optional `KANDIDLY_GITHUB_TOKEN` (lifts GitHub rate limit) in `config.py` + compose + `.env.example`.
+
+**Verified e2e** (against the running stack, no LLM key): GitHub scrape `done` (torvalds, 8 repos) + website via bs4; summarize correctly degraded to `text_only`; full pipeline `enrich_sources`→`generate_plan`→cached `ready` bundle; HTTP `bootstrap` returns populated `context`; **cold-cache miss rebuilds from Postgres** and re-caches; SSRF/loopback + DNS-fail + malformed URLs all fail gracefully.
+
+**Still needs a backend LLM key** (same caveat as above): without `KANDIDLY_ANTHROPIC_API_KEY`, source digests are `text_only` and plans are `fallback_generic` — the bundle still caches and the agent still gets form + requisition + raw scraped text. Add the key for source-grounded seed questions + `SourceDigest` summaries.
+
+**To run after pulling this:** `make -C infra migrate` (applies 0006), rebuild backend+worker for bs4 (`podman compose build backend worker`), restart the worker (arq doesn't auto-reload) and agent.
