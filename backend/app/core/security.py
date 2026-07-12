@@ -59,3 +59,28 @@ def verify_service_token(provided: str | None) -> None:
     """Constant-time check of X-Service-Token (SPEC §12.4)."""
     if not provided or not secrets.compare_digest(provided, settings.service_token):
         raise AppError("unauthorized", "Invalid service token")
+
+
+# --- logout denylist ---------------------------------------------------------
+# Bearer tokens are stateless, so logout is a server-side denylist in Redis
+# keyed by token hash. Checks fail open: an unreachable Redis must not take
+# every authenticated route down with it.
+def _token_key(token: str) -> str:
+    from hashlib import sha256
+
+    return f"auth:revoked:{sha256(token.encode()).hexdigest()}"
+
+
+async def revoke_token(token: str) -> None:
+    from app.core import cache
+
+    await cache.set_json(_token_key(token), {"revoked": True}, ttl=settings.auth_revoked_token_ttl_s)
+
+
+async def is_token_revoked(token: str) -> bool:
+    from app.core import cache
+
+    try:
+        return await cache.get_json(_token_key(token)) is not None
+    except Exception:  # noqa: BLE001 — fail open when Redis is unavailable
+        return False

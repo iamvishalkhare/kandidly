@@ -12,12 +12,13 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import storage
+from app.core.config import settings
 from app.core.deps import get_db, require_role
 from app.core.errors import AppError
 from app.core.ids import new_id
@@ -27,8 +28,11 @@ from app.db.models import (
     AuditLog,
     CatalogEntry,
     FormTemplate,
+    IdentityCheck,
     Interview,
     InviteLink,
+    Organization,
+    ProctoringEvent,
     ProctoringSnapshot,
     Report,
     Requisition,
@@ -39,6 +43,7 @@ from app.db.models import (
     User,
 )
 from app.domain.audit import record_audit
+from app.domain.integrity import integrity_band
 from app.domain.builder import (
     builder_fields_to_schema,
     builder_rubric_to_criteria,
@@ -47,6 +52,11 @@ from app.domain.builder import (
 )
 from app.domain.forms import validate_template
 from app.domain.links import generate_token
+from app.domain.plan import (
+    ensure_can_create_requisition,
+    interview_count,
+    requisition_count,
+)
 from app.domain.rubrics import validate_criteria
 from app.schemas.interview_config import InterviewConfig, ProctoringConfig
 
@@ -98,6 +108,9 @@ class ConsoleRequisitionIn(BaseModel):
     end_date: str | None = None
     # Webcam snapshots every 10s during the interview (proctoring pipeline).
     proctoring_enabled: bool = True
+    # Interview length in minutes; the agent paces and ends the interview to
+    # fit this window (stored as interview_config.max_duration_seconds).
+    duration_minutes: int = Field(default=30, ge=15, le=90)
     deploy: bool = True  # False → "Save as Offline" (draft)
 
     @field_validator("end_date")
@@ -137,6 +150,7 @@ class ConsoleRequisitionDetailOut(ConsoleRequisitionOut):
     tone: str = "conversational"
     end_date: str | None = None
     proctoring_enabled: bool = True
+    duration_minutes: int = 30
     sample_questions: list[BuilderQuestion] = []
     screening_fields: list[BuilderField] = []
     rubric: list[BuilderCriterion] = []
@@ -152,11 +166,12 @@ class ConsoleInterviewOut(BaseModel):
     id: UUID
     code: str | None = None
     candidate_name: str
+    candidate_email: str | None = None
     requisition_code: str
     requisition_title: str
     domain: str | None = None
     scoring_status: Literal["evaluating", "done"]
-    decision: str | None = None  # human review decision, else AI recommendation
+    decision: str | None = None  # human review decision; null until reviewed
     concluded_at: datetime | None = None
     duration_seconds: int = 0
     final_score: float | None = None
@@ -183,6 +198,63 @@ class ProctorFrameOut(BaseModel):
     seconds: int
     signal: str | None = None
     image_url: str | None = None
+    analyzed: bool = False
+    note: str | None = None  # vision job's observation (client_meta.vision.note)
+
+
+class ProctorFramePageOut(BaseModel):
+    """One filmstrip page, ordered by capture time (infinite scroll)."""
+
+    items: list[ProctorFrameOut]
+    total: int
+    offset: int
+    limit: int
+
+
+class IntegrityOut(BaseModel):
+    """Read-time aggregation over snapshots + proctor events. The verdict is
+    the LLM integrity review (score 0-100, banded) once review_integrity has
+    run; the signal-count heuristic is the fallback until then."""
+
+    verdict: Literal["clear", "warn", "flagged", "pending"]
+    frame_count: int
+    analyzed_count: int
+    signal_counts: dict[str, int] = {}
+    event_counts: dict[str, int] = {}  # by severity
+    identity_verdict: str | None = None
+    score: int | None = None  # LLM integrity score, higher = cleaner
+    band: str | None = None  # "90-100" | "60-89" | "40-59" | "under-40"
+    summary: str | None = None  # LLM reviewer's 2-3 sentence rationale
+
+
+def integrity_verdict(
+    signal_counts: dict[str, int],
+    event_counts: dict[str, int],
+    frame_count: int,
+    analyzed_count: int,
+    score: int | None = None,
+) -> str:
+    """Pure aggregation → verdict; unit-tested in tests/test_recording.py.
+    An LLM integrity score takes precedence (band → chip color); the
+    signal/event heuristic covers interviews reviewed before it lands."""
+    if score is not None:
+        band = integrity_band(score)
+        return {"90-100": "clear", "60-89": "warn"}.get(band, "flagged")
+    if frame_count > 0 and analyzed_count == 0:
+        return "pending"
+    if (
+        signal_counts.get("multiple_faces")
+        or signal_counts.get("no_face")
+        or event_counts.get("high")
+    ):
+        return "flagged"
+    if (
+        signal_counts.get("attention_shift")
+        or signal_counts.get("low_light")
+        or event_counts.get("medium")
+    ):
+        return "warn"
+    return "clear"
 
 
 class ReviewTrailOut(BaseModel):
@@ -194,7 +266,7 @@ class ReviewTrailOut(BaseModel):
 
 class ConsoleReviewOut(ConsoleInterviewOut):
     recommendation: str | None = None
-    review_decision: str | None = None  # raw human decision (decision may be the AI hint)
+    review_decision: str | None = None  # same as decision; kept for the review page wire shape
     assessment_summary: str | None = None
     review_notes: str | None = None
     percentile: int | None = None
@@ -203,7 +275,8 @@ class ConsoleReviewOut(ConsoleInterviewOut):
     waveform: dict | None = None
     transcript: list[TranscriptTurnOut] = []
     rubric: list[RubricAssessmentOut] = []
-    proctor_frames: list[ProctorFrameOut] = []
+    # Proctor frames are paginated separately (GET …/{id}/snapshots).
+    integrity: IntegrityOut | None = None
     review_trail: list[ReviewTrailOut] = []
 
 
@@ -304,8 +377,7 @@ def _closes_at_from(end_date: str | None) -> datetime | None:
 
 
 def _proctoring_config(enabled: bool) -> ProctoringConfig:
-    # Console proctoring captures a webcam frame every 10 seconds.
-    return ProctoringConfig(enabled=enabled, snapshot_min_s=10, snapshot_max_s=10)
+    return ProctoringConfig(enabled=enabled, snapshot_interval_s=settings.snapshot_interval_s)
 
 
 def _builder_is_valid(body: ConsoleRequisitionIn, schema: dict) -> bool:
@@ -404,6 +476,54 @@ async def _create_template_and_rubric(
 
 
 # --------------------------------------------------------------------------- #
+# account & usage (profile modal)
+# --------------------------------------------------------------------------- #
+class AccountOut(BaseModel):
+    name: str
+    email: str
+    role: str
+    org_name: str
+    avatar_url: str | None = None
+    plan: str = "free"
+
+
+class UsageOut(BaseModel):
+    plan: str = "free"
+    requisitions_used: int
+    requisitions_limit: int
+    interviews_used: int
+    interviews_limit: int
+    # cumulative interviews at which candidate attempts go on hold (ER0402)
+    interviews_hold_at: int
+
+
+@router.get("/me", response_model=AccountOut)
+async def get_account(user: AuthUser = _admin, db: AsyncSession = Depends(get_db)) -> AccountOut:
+    org_id = await _org_id_for(db, user)
+    org = await db.get(Organization, org_id)
+    row = await db.get(User, user.user_id)
+    return AccountOut(
+        name=(row.display_name if row else None) or user.email.split("@")[0].title(),
+        email=user.email,
+        role=user.role,
+        org_name=org.name if org else "—",
+        avatar_url=row.avatar_url if row else None,
+    )
+
+
+@router.get("/usage", response_model=UsageOut)
+async def get_usage(user: AuthUser = _admin, db: AsyncSession = Depends(get_db)) -> UsageOut:
+    org_id = await _org_id_for(db, user)
+    return UsageOut(
+        requisitions_used=await requisition_count(db, org_id),
+        requisitions_limit=settings.free_plan_max_requisitions,
+        interviews_used=await interview_count(db, org_id),
+        interviews_limit=settings.free_plan_max_interviews,
+        interviews_hold_at=settings.free_plan_interview_hold_at,
+    )
+
+
+# --------------------------------------------------------------------------- #
 # catalog
 # --------------------------------------------------------------------------- #
 @router.get("/catalog", response_model=CatalogOut)
@@ -436,7 +556,7 @@ async def list_console_requisitions(
         (
             await db.execute(
                 select(Requisition)
-                .where(Requisition.org_id == org_id)
+                .where(Requisition.org_id == org_id, Requisition.deleted_at.is_(None))
                 .order_by(Requisition.created_at.desc())
             )
         )
@@ -469,6 +589,7 @@ async def _detail_out(db: AsyncSession, r: Requisition) -> ConsoleRequisitionDet
         tone=cfg.tone,
         end_date=r.end_date.isoformat() if r.end_date else None,
         proctoring_enabled=cfg.proctoring.enabled,
+        duration_minutes=cfg.max_duration_seconds // 60,
         sample_questions=[BuilderQuestion(**q) for q in (r.sample_questions or [])],
         screening_fields=[
             BuilderField(**f)
@@ -484,13 +605,19 @@ async def _detail_out(db: AsyncSession, r: Requisition) -> ConsoleRequisitionDet
     )
 
 
+async def _get_live_requisition(db: AsyncSession, req_id: UUID) -> Requisition:
+    """Fetch for view/edit — a soft-deleted requisition is gone (404)."""
+    req = await db.get(Requisition, req_id)
+    if req is None or req.deleted_at is not None:
+        raise AppError("not_found", "Requisition not found")
+    return req
+
+
 @router.get("/requisitions/{req_id}", response_model=ConsoleRequisitionDetailOut)
 async def get_console_requisition(
     req_id: UUID, user: AuthUser = _admin, db: AsyncSession = Depends(get_db)
 ) -> ConsoleRequisitionDetailOut:
-    req = await db.get(Requisition, req_id)
-    if req is None:
-        raise AppError("not_found", "Requisition not found")
+    req = await _get_live_requisition(db, req_id)
     return await _detail_out(db, req)
 
 
@@ -503,6 +630,8 @@ async def deploy_requisition(
     import asyncio
     await asyncio.sleep(3)
     org_id = await _org_id_for(db, user)
+    # Free-plan quota: creating a requisition past the cap is refused (402).
+    await ensure_can_create_requisition(db, org_id, deploy=body.deploy)
     template, rubric, artifact_status = await _create_template_and_rubric(db, org_id, user, body, family=None)
 
     seq = (await db.execute(sa_text("SELECT nextval('requisition_code_seq')"))).scalar_one()
@@ -527,6 +656,7 @@ async def deploy_requisition(
         status=req_status,
         interview_config=InterviewConfig(
             tone=body.tone,
+            max_duration_seconds=body.duration_minutes * 60,
             proctoring=_proctoring_config(body.proctoring_enabled),
         ).model_dump(),
         created_by=user.user_id,
@@ -572,9 +702,7 @@ async def update_requisition(
     published version and repoint the requisition."""
     import asyncio
     await asyncio.sleep(3)
-    req = await db.get(Requisition, req_id)
-    if req is None:
-        raise AppError("not_found", "Requisition not found")
+    req = await _get_live_requisition(db, req_id)
     org_id = await _org_id_for(db, user)
 
     current_template = await db.get(FormTemplate, req.form_template_id)
@@ -627,6 +755,7 @@ async def update_requisition(
     req.interview_config = cfg.model_copy(
         update={
             "tone": body.tone,
+            "max_duration_seconds": body.duration_minutes * 60,
             "proctoring": _proctoring_config(body.proctoring_enabled),
         }
     ).model_dump()
@@ -659,6 +788,32 @@ async def update_requisition(
     return await _detail_out(db, req)
 
 
+@router.delete("/requisitions/{req_id}")
+async def delete_requisition(
+    req_id: UUID, user: AuthUser = _admin, db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Soft delete (irreversible from the UI): the requisition disappears from
+    every console/admin read and its invite links stop resolving ('closed'),
+    while interviews taken against it keep their requisition_id and stay in
+    the ledger."""
+    req = await _get_live_requisition(db, req_id)
+    now = datetime.now(UTC)
+    req.deleted_at = now
+    req.status = "closed"
+    req.updated_at = now
+    await record_audit(
+        db,
+        actor_id=user.user_id,
+        action="requisition.delete",
+        entity_type="requisition",
+        entity_id=req.id,
+    )
+    # Same read-your-write rationale as update_requisition: commit before the
+    # response so the requisitions list refetch can't see the pre-delete row.
+    await db.commit()
+    return {"ok": True}
+
+
 # --------------------------------------------------------------------------- #
 # interviews ledger + review
 # --------------------------------------------------------------------------- #
@@ -668,13 +823,14 @@ def _ledger_row(
     req: Requisition,
     report: Report | None,
 ) -> ConsoleInterviewOut:
+    # Human review decision only — the AI hint stays on the review page as
+    # `recommendation`, never in the ledger's decision column.
     decision = report.review_decision if report else None
-    if decision is None and report is not None:
-        decision = recommendation_for(float(report.overall_score))
     return ConsoleInterviewOut(
         id=interview.id,
         code=interview.code,
         candidate_name=_candidate_name(candidate),
+        candidate_email=candidate.email if candidate else None,
         requisition_code=req.code,
         requisition_title=req.title,
         domain=req.domain,
@@ -810,24 +966,57 @@ async def get_console_review(
         if f is not None:
             audio_url = await storage.presign_get(f.bucket, f.key, public=True)
 
-    # Proctor frames with presigned snapshot images.
+    # Integrity aggregation over the full snapshot set (the filmstrip itself
+    # is served paginated by console_review_snapshots).
     snap_rows = (
-        await db.execute(
-            select(ProctoringSnapshot, StoredFile)
-            .join(StoredFile, StoredFile.id == ProctoringSnapshot.file_id)
-            .where(ProctoringSnapshot.interview_id == interview.id)
-            .order_by(ProctoringSnapshot.captured_at)
+        (
+            await db.execute(
+                select(ProctoringSnapshot.analyzed, ProctoringSnapshot.signal).where(
+                    ProctoringSnapshot.interview_id == interview.id
+                )
+            )
         )
-    ).all()
-    frames = [
-        ProctorFrameOut(
-            id=snap.id,
-            seconds=max(0, int((snap.captured_at - start).total_seconds())) if start else 0,
-            signal=snap.signal,
-            image_url=await storage.presign_get(f.bucket, f.key, public=True),
-        )
-        for snap, f in snap_rows
-    ]
+        .all()
+    )
+    frame_count = len(snap_rows)
+    analyzed_count = sum(1 for analyzed, _signal in snap_rows if analyzed)
+    signal_counts: dict[str, int] = {}
+    for _analyzed, signal in snap_rows:
+        if signal:
+            signal_counts[signal] = signal_counts.get(signal, 0) + 1
+    event_counts = {
+        severity: count
+        for severity, count in (
+            await db.execute(
+                select(ProctoringEvent.severity, func.count())
+                .where(ProctoringEvent.interview_id == interview.id)
+                .group_by(ProctoringEvent.severity)
+            )
+        ).all()
+    }
+    identity = (
+        await db.execute(select(IdentityCheck).where(IdentityCheck.interview_id == interview.id))
+    ).scalar_one_or_none()
+    review = interview.integrity_review or {}
+    integrity = IntegrityOut(
+        verdict=integrity_verdict(  # type: ignore[arg-type]
+            signal_counts,
+            event_counts,
+            frame_count,
+            analyzed_count,
+            score=interview.integrity_score,
+        ),
+        frame_count=frame_count,
+        analyzed_count=analyzed_count,
+        signal_counts=signal_counts,
+        event_counts=event_counts,
+        identity_verdict=identity.verdict if identity else None,
+        score=interview.integrity_score,
+        band=integrity_band(interview.integrity_score)
+        if interview.integrity_score is not None
+        else None,
+        summary=review.get("summary"),
+    )
 
     # Review trail from the audit log (report actions), plus scoring milestone.
     trail: list[ReviewTrailOut] = []
@@ -857,6 +1046,8 @@ async def get_console_review(
                     detail=(entry.meta or {}).get("decision"),
                 )
             )
+    # Latest activity first.
+    trail.sort(key=lambda t: t.at, reverse=True)
 
     return ConsoleReviewOut(
         **base.model_dump(),
@@ -870,9 +1061,57 @@ async def get_console_review(
         waveform=interview.audio_waveform,
         transcript=transcript,
         rubric=rubric_rows,
-        proctor_frames=frames,
+        integrity=integrity,
         review_trail=trail,
     )
+
+
+@router.get("/interviews/{interview_id}/snapshots", response_model=ProctorFramePageOut)
+async def console_review_snapshots(
+    interview_id: UUID,
+    offset: int = 0,
+    limit: int = 10,
+    user: AuthUser = _admin,
+    db: AsyncSession = Depends(get_db),
+) -> ProctorFramePageOut:
+    """Filmstrip page for the review screen: every captured frame, capture
+    order, presigned image URLs. Small pages keep presigning cheap; the client
+    infinite-scrolls through them."""
+    interview = await db.get(Interview, interview_id)
+    if interview is None:
+        raise AppError("not_found", "Interview not found")
+    offset = max(0, offset)
+    limit = max(1, min(50, limit))
+    start = interview.started_at
+    total = (
+        await db.execute(
+            select(func.count())
+            .select_from(ProctoringSnapshot)
+            .where(ProctoringSnapshot.interview_id == interview.id)
+        )
+    ).scalar_one()
+    rows = (
+        await db.execute(
+            select(ProctoringSnapshot, StoredFile)
+            .join(StoredFile, StoredFile.id == ProctoringSnapshot.file_id)
+            .where(ProctoringSnapshot.interview_id == interview.id)
+            .order_by(ProctoringSnapshot.captured_at, ProctoringSnapshot.id)
+            .offset(offset)
+            .limit(limit)
+        )
+    ).all()
+    items = [
+        ProctorFrameOut(
+            id=snap.id,
+            seconds=max(0, int((snap.captured_at - start).total_seconds())) if start else 0,
+            signal=snap.signal,
+            image_url=await storage.presign_get(f.bucket, f.key, public=True),
+            analyzed=snap.analyzed,
+            note=((snap.client_meta or {}).get("vision") or {}).get("note"),
+        )
+        for snap, f in rows
+    ]
+    return ProctorFramePageOut(items=items, total=total, offset=offset, limit=limit)
 
 
 # --------------------------------------------------------------------------- #

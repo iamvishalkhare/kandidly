@@ -451,6 +451,11 @@ export default function ConsoleInterviews() {
               >
                 <div className="px-4 py-4">
                   <p className="font-medium text-on-surface">{interview.candidateName}</p>
+                  {interview.candidateEmail && (
+                    <p className="text-sm text-on-surface-variant mt-0.5 break-all">
+                      {interview.candidateEmail}
+                    </p>
+                  )}
                   <p className="label-mono text-on-surface-variant mt-1">{interview.code.toUpperCase()}</p>
                 </div>
                 <div className="px-4 py-4 xl:border-l xl:border-outline-variant label-mono text-primary-fixed-dim">

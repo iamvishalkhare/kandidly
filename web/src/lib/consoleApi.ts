@@ -4,10 +4,14 @@
  * the console pages already render (Requisition, InterviewRecord, …).
  */
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from './api';
+import type { AccountOut, UsageOut } from './types';
 import type { Requisition } from '../pages/console/requisitionData';
 import type {
+  IntegrityBand,
+  IntegritySummary,
+  IntegrityVerdict,
   InterviewDecision,
   InterviewReview,
   ProctorFrame,
@@ -60,6 +64,7 @@ export interface ConsoleRequisitionDetailWire extends ConsoleRequisitionWire {
   tone: string;
   end_date: string | null;
   proctoring_enabled: boolean;
+  duration_minutes: number;
   sample_questions: BuilderQuestionWire[];
   screening_fields: BuilderFieldWire[];
   rubric: BuilderCriterionWire[];
@@ -73,6 +78,8 @@ export interface ConsoleRequisitionIn {
   tone: string;
   end_date: string | null;
   proctoring_enabled: boolean;
+  /** Interview length in minutes (15–90; the agent ends the interview at this cap). */
+  duration_minutes: number;
   sample_questions: BuilderQuestionWire[];
   screening_fields: BuilderFieldWire[];
   rubric: BuilderCriterionWire[];
@@ -89,6 +96,7 @@ export interface ConsoleInterviewWire {
   id: string;
   code: string | null;
   candidate_name: string;
+  candidate_email: string | null;
   requisition_code: string;
   requisition_title: string;
   domain: string | null;
@@ -110,8 +118,34 @@ export interface ConsoleReviewWire extends ConsoleInterviewWire {
   waveform: { peaks: number[]; bins: number; duration_seconds: number } | null;
   transcript: { id: string; seconds: number; speaker: string; text: string }[];
   rubric: { key: string; label: string; weight: number; score: number; summary: string; reasoning: string }[];
-  proctor_frames: { id: string; seconds: number; signal: string | null; image_url: string | null }[];
+  integrity: {
+    verdict: IntegrityVerdict;
+    frame_count: number;
+    analyzed_count: number;
+    signal_counts: Record<string, number>;
+    event_counts: Record<string, number>;
+    identity_verdict: string | null;
+    score: number | null;
+    band: IntegrityBand | null;
+    summary: string | null;
+  } | null;
   review_trail: { at: string; actor: string; action: string; detail: string | null }[];
+}
+
+export interface ProctorFrameWire {
+  id: string;
+  seconds: number;
+  signal: string | null;
+  image_url: string | null;
+  analyzed: boolean;
+  note: string | null;
+}
+
+export interface ProctorFramePageWire {
+  items: ProctorFrameWire[];
+  total: number;
+  offset: number;
+  limit: number;
 }
 
 export interface WeeklyPointWire {
@@ -195,6 +229,7 @@ export interface LedgerRow {
   id: string;
   code: string;
   candidateName: string;
+  candidateEmail: string | null;
   requisitionId: string;
   requisitionTitle: string;
   domain: string;
@@ -210,6 +245,7 @@ export function toLedgerRow(wire: ConsoleInterviewWire): LedgerRow {
     id: wire.id,
     code: wire.code ?? wire.id.slice(0, 8).toUpperCase(),
     candidateName: wire.candidate_name,
+    candidateEmail: wire.candidate_email,
     requisitionId: wire.requisition_code,
     requisitionTitle: wire.requisition_title,
     domain: wire.domain ?? '—',
@@ -234,6 +270,19 @@ export interface ReviewData extends InterviewReview {
   reviewTrail: ReviewTrailEntry[];
 }
 
+export function toProctorFrame(f: ProctorFrameWire): ProctorFrame {
+  return {
+    id: f.id,
+    at: formatClock(f.seconds),
+    seconds: f.seconds,
+    // Unanalyzed frames read "Pending", never a false "Clear".
+    signal: f.analyzed ? (SIGNAL_LABELS[f.signal ?? 'clear'] ?? 'Clear') : 'Pending',
+    imageUrl: f.image_url ?? undefined,
+    analyzed: f.analyzed,
+    note: f.note,
+  };
+}
+
 export function toReview(wire: ConsoleReviewWire): ReviewData {
   const transcript: TranscriptTurn[] = wire.transcript.map(t => ({
     id: t.id,
@@ -250,18 +299,25 @@ export function toReview(wire: ConsoleReviewWire): ReviewData {
     summary: r.summary,
     reasoning: r.reasoning,
   }));
-  const proctorFrames: ProctorFrame[] = wire.proctor_frames.map(f => ({
-    id: f.id,
-    at: formatClock(f.seconds),
-    seconds: f.seconds,
-    signal: SIGNAL_LABELS[f.signal ?? 'clear'] ?? 'Clear',
-    imageUrl: f.image_url ?? undefined,
-  }));
+  const integrity: IntegritySummary | null = wire.integrity
+    ? {
+        verdict: wire.integrity.verdict,
+        frameCount: wire.integrity.frame_count,
+        analyzedCount: wire.integrity.analyzed_count,
+        signalCounts: wire.integrity.signal_counts,
+        eventCounts: wire.integrity.event_counts,
+        identityVerdict: wire.integrity.identity_verdict,
+        score: wire.integrity.score,
+        band: wire.integrity.band,
+        summary: wire.integrity.summary,
+      }
+    : null;
 
   return {
     id: wire.id,
     code: wire.code ?? wire.id.slice(0, 8).toUpperCase(),
     candidateName: wire.candidate_name,
+    candidateEmail: wire.candidate_email,
     requisitionId: wire.requisition_code,
     requisitionTitle: wire.requisition_title,
     domain: wire.domain ?? '—',
@@ -277,7 +333,7 @@ export function toReview(wire: ConsoleReviewWire): ReviewData {
       'Scoring in progress — the assessment summary will appear once evaluation completes.',
     comparisonScores: wire.comparison_scores,
     transcript,
-    proctorFrames,
+    integrity,
     rubric,
     waveformPeaks: wire.waveform?.peaks ?? null,
     audioDurationSeconds: wire.waveform?.duration_seconds ?? null,
@@ -289,6 +345,10 @@ export function toReview(wire: ConsoleReviewWire): ReviewData {
 /* ── fetchers ─────────────────────────────────────────────────────────────── */
 
 export const consoleApi = {
+  getMe: async (): Promise<AccountOut> =>
+    (await api.get<AccountOut>('/api/admin/console/me')).data,
+  getUsage: async (): Promise<UsageOut> =>
+    (await api.get<UsageOut>('/api/admin/console/usage')).data,
   getCatalog: async (): Promise<CatalogWire> =>
     (await api.get<CatalogWire>('/api/admin/console/catalog')).data,
   getRequisitions: async (): Promise<ConsoleRequisitionWire[]> =>
@@ -299,6 +359,10 @@ export const consoleApi = {
     (await api.post<ConsoleRequisitionDetailWire>('/api/admin/console/requisitions', body)).data,
   updateRequisition: async (id: string, body: ConsoleRequisitionIn): Promise<ConsoleRequisitionDetailWire> =>
     (await api.put<ConsoleRequisitionDetailWire>(`/api/admin/console/requisitions/${id}`, body)).data,
+  /** Soft delete: requisition disappears from the console; its interviews stay. */
+  deleteRequisition: async (id: string): Promise<void> => {
+    await api.delete(`/api/admin/console/requisitions/${id}`);
+  },
   setRequisitionStatus: async (id: string, status: string): Promise<void> => {
     await api.post(`/api/admin/requisitions/${id}/status`, { status });
   },
@@ -306,6 +370,12 @@ export const consoleApi = {
     (await api.get<ConsoleInterviewWire[]>('/api/admin/console/interviews')).data,
   getReview: async (id: string): Promise<ConsoleReviewWire> =>
     (await api.get<ConsoleReviewWire>(`/api/admin/console/interviews/${id}`)).data,
+  getSnapshots: async (id: string, offset: number, limit: number): Promise<ProctorFramePageWire> =>
+    (
+      await api.get<ProctorFramePageWire>(
+        `/api/admin/console/interviews/${id}/snapshots?offset=${offset}&limit=${limit}`,
+      )
+    ).data,
   reviewInterview: async (id: string, decision: string, notes?: string): Promise<void> => {
     await api.post(`/api/admin/interviews/${id}/report/review`, { decision, notes });
   },
@@ -314,6 +384,14 @@ export const consoleApi = {
 };
 
 /* ── query hooks ──────────────────────────────────────────────────────────── */
+
+export function useConsoleMe() {
+  return useQuery({ queryKey: ['console', 'me'], queryFn: consoleApi.getMe });
+}
+
+export function useConsoleUsage() {
+  return useQuery({ queryKey: ['console', 'usage'], queryFn: consoleApi.getUsage });
+}
 
 export function useConsoleRequisitions() {
   return useQuery({
@@ -349,7 +427,18 @@ export function useConsoleInterviews() {
     queryKey: ['console', 'interviews'],
     queryFn: consoleApi.getInterviews,
     select: rows => rows.map(toLedgerRow),
+    // Keep the Evaluating chips honest while any scoring run is in flight.
+    // NB: the callback receives the raw wire rows, not the `select`-mapped ones.
+    refetchInterval: query =>
+      query.state.data?.some(row => row.scoring_status === 'evaluating') ? 10_000 : false,
   });
+}
+
+/** Vision/verdict pipeline still running: frames exist, analysis has started
+ * (so a provider is configured), and the final LLM score hasn't landed. */
+function integrityBusy(wire: ConsoleReviewWire): boolean {
+  const i = wire.integrity;
+  return !!i && i.frame_count > 0 && i.analyzed_count > 0 && i.score == null;
 }
 
 export function useConsoleReview(id: string | undefined) {
@@ -358,6 +447,37 @@ export function useConsoleReview(id: string | undefined) {
     queryFn: () => consoleApi.getReview(id!),
     enabled: !!id,
     select: toReview,
+    // Poll while evaluation is in flight so the page flips to Done on its own,
+    // then more slowly while frame analysis / the integrity verdict finish.
+    // NB: the callback receives the raw wire shape, not the `select`-mapped one.
+    refetchInterval: query => {
+      const wire = query.state.data;
+      if (!wire) return false;
+      if (wire.scoring_status === 'evaluating') return 4_000;
+      return integrityBusy(wire) ? 10_000 : false;
+    },
+  });
+}
+
+const FRAME_PAGE_SIZE = 10;
+
+/** Paginated proctor filmstrip; `poll` keeps fetched pages fresh while the
+ * vision pipeline is still analyzing frames. */
+export function useProctorFrames(id: string | undefined, poll: boolean) {
+  return useInfiniteQuery({
+    queryKey: ['console', 'interviews', id, 'snapshots'],
+    queryFn: ({ pageParam }) => consoleApi.getSnapshots(id!, pageParam, FRAME_PAGE_SIZE),
+    initialPageParam: 0,
+    getNextPageParam: last => {
+      const next = last.offset + last.items.length;
+      return next < last.total ? next : undefined;
+    },
+    enabled: !!id,
+    refetchInterval: poll ? 10_000 : false,
+    select: data => ({
+      frames: data.pages.flatMap(page => page.items.map(toProctorFrame)),
+      total: data.pages[0]?.total ?? 0,
+    }),
   });
 }
 

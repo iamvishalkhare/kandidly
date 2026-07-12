@@ -9,7 +9,7 @@ from fastapi import Depends, Header, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError
-from app.core.security import AuthUser, Role, verify_jwt, verify_service_token
+from app.core.security import AuthUser, Role, is_token_revoked, verify_jwt, verify_service_token
 from app.db.session import get_session
 
 
@@ -26,7 +26,11 @@ def _bearer(authorization: str | None) -> str:
 
 async def get_current_user(authorization: str | None = Header(default=None)) -> AuthUser:
     """SPEC §3.6 — resolve the AuthUser from the Authorization header."""
-    return verify_jwt(_bearer(authorization))
+    token = _bearer(authorization)
+    user = verify_jwt(token)
+    if await is_token_revoked(token):
+        raise AppError("unauthorized", "Session has been logged out")
+    return user
 
 
 def require_role(*roles: Role) -> Callable[[AuthUser], AuthUser]:

@@ -3,6 +3,7 @@
  * Determines active nav item from the current URL.
  */
 
+import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard,
@@ -10,11 +11,13 @@ import {
   MessageSquare,
   BookOpen,
   BarChart3,
-  Settings,
-  HelpCircle,
+  ChevronRight,
   Plus,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { getUser } from '../../lib/auth';
+import { useConsoleMe } from '../../lib/consoleApi';
+import AccountModal, { Avatar } from './AccountModal';
 
 const NAV_ITEMS = [
   { label: 'Dashboard',    icon: LayoutDashboard, href: '/console',              exact: true },
@@ -24,13 +27,33 @@ const NAV_ITEMS = [
   { label: 'Analytics',    icon: BarChart3,       href: '/console/analytics',    exact: false },
 ] as const;
 
-const BOTTOM_NAV = [
-  { label: 'Settings', icon: Settings,    href: '/console' },
-  { label: 'Support',  icon: HelpCircle,  href: '/console' },
-] as const;
+/** Sidebar footer: the signed-in user; opens the account/usage/logout modal. */
+function UserChip({ onClick }: { onClick: () => void }) {
+  const { data: me } = useConsoleMe();
+  const stored = getUser(); // localStorage fallback while /me loads
+  const name = me?.name ?? stored?.email?.split('@')[0] ?? 'Account';
+  const email = me?.email ?? stored?.email ?? '';
+  return (
+    <button
+      onClick={onClick}
+      className="w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-surface-container transition-colors duration-150 group"
+    >
+      <Avatar name={me?.name} email={email} avatarUrl={me?.avatar_url} />
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium text-on-surface truncate">{name}</p>
+        <p className="font-mono text-xs text-on-surface-variant truncate">{email}</p>
+      </div>
+      <ChevronRight
+        size={14}
+        className="shrink-0 text-on-surface-variant group-hover:text-on-surface transition-colors duration-150"
+      />
+    </button>
+  );
+}
 
 export default function ConsoleLayout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
+  const [accountOpen, setAccountOpen] = useState(false);
 
   return (
     <div className="flex h-screen overflow-hidden bg-surface-container-lowest">
@@ -78,26 +101,16 @@ export default function ConsoleLayout({ children }: { children: React.ReactNode 
           })}
         </nav>
 
-        {/* Bottom nav */}
-        <div className="px-3 pb-4 space-y-0.5 border-t border-outline-variant pt-3">
-          {BOTTOM_NAV.map(item => {
-            const Icon = item.icon;
-            return (
-              <Link
-                key={item.label}
-                to={item.href}
-                className="flex items-center gap-3 px-3 py-2.5 label-mono text-on-surface-variant hover:text-on-surface hover:bg-surface-container transition-colors duration-150"
-              >
-                <Icon size={18} />
-                {item.label}
-              </Link>
-            );
-          })}
+        {/* Signed-in user */}
+        <div className="px-3 pb-4 border-t border-outline-variant pt-3">
+          <UserChip onClick={() => setAccountOpen(true)} />
         </div>
       </aside>
 
       {/* Main content */}
       <main className="flex-1 overflow-y-auto flex flex-col">{children}</main>
+
+      <AccountModal open={accountOpen} onClose={() => setAccountOpen(false)} />
     </div>
   );
 }

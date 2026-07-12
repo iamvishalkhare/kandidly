@@ -24,6 +24,7 @@ ERROR_CODES = {
     "captcha_failed",
     "unauthorized",
     "internal_error",
+    "plan_limit",
 }
 
 # Default HTTP status per code.
@@ -40,6 +41,7 @@ _CODE_STATUS = {
     "captcha_failed": 403,
     "unauthorized": 401,
     "internal_error": 500,
+    "plan_limit": 402,
 }
 
 

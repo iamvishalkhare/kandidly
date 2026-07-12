@@ -379,7 +379,11 @@ async def create_requisition(
 
 @router.get("/requisitions", response_model=list[RequisitionOut])
 async def list_requisitions(user: AuthUser = _admin, db: AsyncSession = Depends(get_db)):
-    query = select(Requisition).order_by(Requisition.created_at.desc())
+    query = (
+        select(Requisition)
+        .where(Requisition.deleted_at.is_(None))
+        .order_by(Requisition.created_at.desc())
+    )
     res = await db.execute(query)
     reqs = res.scalars().all()
     # we need to populate application_count for each (if we want, or leave 0 for now)
@@ -393,7 +397,7 @@ async def get_requisition(
     req_id: UUID, user: AuthUser = _admin, db: AsyncSession = Depends(get_db)
 ):
     req = await db.get(Requisition, req_id)
-    if not req:
+    if not req or req.deleted_at is not None:
         raise AppError("not_found", "Requisition not found")
     return req
 
@@ -406,7 +410,7 @@ async def set_requisition_status(
     db: AsyncSession = Depends(get_db),
 ) -> RequisitionOut:
     r = await db.get(Requisition, req_id)
-    if r is None:
+    if r is None or r.deleted_at is not None:
         raise AppError("not_found", "Requisition not found")
     target = body.status
     allowed = {
@@ -441,7 +445,7 @@ async def create_link(
     req_id: UUID, body: LinkCreate, user: AuthUser = _admin, db: AsyncSession = Depends(get_db)
 ) -> LinkOut:
     r = await db.get(Requisition, req_id)
-    if r is None:
+    if r is None or r.deleted_at is not None:
         raise AppError("not_found", "Requisition not found")
     if body.kind not in ("open", "personal"):
         raise AppError("validation_error", "kind must be 'open' or 'personal'")

@@ -36,6 +36,7 @@ import {
   consoleApi,
   useCatalog,
   useConsoleRequisition,
+  useConsoleUsage,
   type ConsoleRequisitionDetailWire,
   type ConsoleRequisitionIn,
 } from '../../lib/consoleApi';
@@ -557,11 +558,19 @@ function BuilderForm({
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const isEditing = !!existing;
+  // Free-plan quota: a new requisition can't be created past the limit
+  // (deploying an existing one doesn't add to the count). Server enforces
+  // the same rule; this just fails fast with the upgrade message.
+  const { data: usage } = useConsoleUsage();
+  const atRequisitionLimit =
+    !isEditing && !!usage && usage.requisitions_used >= usage.requisitions_limit;
   const currentStatus = existing?.status ?? 'draft';
   const interviewUrl = existing?.invite_token ? getInterviewUrl(existing.invite_token) : null;
   const [copiedInterviewUrl, setCopiedInterviewUrl] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deployState, setDeployState] = useState<'idle' | 'processing' | 'success'>('idle');
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const handleCloseSplash = useCallback(() => {
     setDeployState('idle');
@@ -582,6 +591,7 @@ function BuilderForm({
   const [skills, setSkills]       = useState<string[]>(existing?.technical_requirements ?? []);
   const [tone, setTone]           = useState<Tone>((existing?.tone as Tone) ?? 'technical');
   const [endDate, setEndDate]     = useState(toDatetimeLocal(existing?.end_date));
+  const [durationMinutes, setDurationMinutes] = useState<number>(existing?.duration_minutes ?? 30);
   const [proctoringEnabled, setProctoringEnabled] = useState(existing?.proctoring_enabled ?? true);
   const [touched, setTouched]     = useState<Record<string, boolean>>({});
   const [attempted, setAttempted] = useState(false);
@@ -726,6 +736,7 @@ function BuilderForm({
     tone,
     end_date: endDate || null,
     proctoring_enabled: proctoringEnabled,
+    duration_minutes: Math.max(15, Math.min(90, Math.round(durationMinutes) || 30)),
     sample_questions: sampleQuestions
       .filter(q => q.text.trim())
       .map(q => ({ id: q.id, text: q.text.trim() })),
@@ -781,6 +792,10 @@ function BuilderForm({
   };
 
   const handleDeploy = () => {
+    if (atRequisitionLimit) {
+      toast('Please upgrade to deploy more interviews.', 'error');
+      return;
+    }
     if (errors.length > 0) {
       setAttempted(true);
       toast('Resolve the errors below before deploying.', 'error');
@@ -792,6 +807,13 @@ function BuilderForm({
   };
 
   const handleSaveOffline = () => {
+    if (atRequisitionLimit) {
+      toast(
+        `Your free plan allows ${usage?.requisitions_limit ?? 5} requisitions. Please upgrade to create more.`,
+        'error',
+      );
+      return;
+    }
     if (!jobTitle.trim() || !domain.trim()) {
       setAttempted(true);
       toast('Job title and domain are required even for drafts.', 'error');
@@ -799,6 +821,24 @@ function BuilderForm({
     }
     if (saving) return;
     void submit(false);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!existing || deleting) return;
+    setDeleting(true);
+    try {
+      await consoleApi.deleteRequisition(existing.id);
+      await queryClient.invalidateQueries({ queryKey: ['console'] });
+      toast(`"${existing.title}" was deleted.`, 'info');
+      navigate('/console/requisitions');
+    } catch (err) {
+      const message =
+        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+        'Deleting the requisition failed. Please try again.';
+      toast(message, 'error');
+      setDeleting(false);
+      setConfirmingDelete(false);
+    }
   };
 
   const handleCopyInterviewUrl = async () => {
@@ -999,6 +1039,27 @@ function BuilderForm({
                 <span className="text-body-md text-on-surface-variant">
                   The interview link automatically goes offline at this date and time.
                   Leave empty to keep it open until you pause or close the requisition.
+                </span>
+              </div>
+              <div className="flex flex-col gap-2">
+                <FieldLabel>Interview Duration (Minutes)</FieldLabel>
+                <input
+                  type="number"
+                  min={15}
+                  max={90}
+                  step={5}
+                  value={Number.isFinite(durationMinutes) ? durationMinutes : ''}
+                  onChange={e => setDurationMinutes(e.target.valueAsNumber)}
+                  onBlur={() =>
+                    setDurationMinutes(v =>
+                      Math.max(15, Math.min(90, Math.round(Number.isFinite(v) ? v : 30))),
+                    )
+                  }
+                  className={inputClasses(false)}
+                />
+                <span className="text-body-md text-on-surface-variant">
+                  The AI interviewer paces its questions to fit this window and ends the
+                  interview when time is up. Between 15 and 90 minutes; default 30.
                 </span>
               </div>
             </div>
@@ -1503,7 +1564,15 @@ function BuilderForm({
       {/* Save action bar */}
       <div className="h-14 border-t border-outline-variant bg-surface-container-lowest flex justify-between items-center px-8 sticky bottom-0 z-30 shrink-0">
         <div className="flex items-center gap-2">
-          {errors.length > 0 ? (
+          {atRequisitionLimit ? (
+            <div className="flex items-center gap-2">
+              <AlertTriangle size={16} className="text-error" />
+              <span className="label-mono text-error">
+                Free plan limit reached ({usage!.requisitions_used}/{usage!.requisitions_limit}{' '}
+                requisitions) — please upgrade to deploy more interviews
+              </span>
+            </div>
+          ) : errors.length > 0 ? (
             <div className="relative group flex items-center gap-2 cursor-help">
               <AlertTriangle size={16} className="text-error" />
               <span className="label-mono text-error border-b border-dashed border-error pb-0.5">
@@ -1530,6 +1599,21 @@ function BuilderForm({
           )}
         </div>
         <div className="flex items-center gap-4">
+          <button
+            type="button"
+            onClick={() => setConfirmingDelete(true)}
+            disabled={!isEditing || saving || deleting}
+            title={isEditing ? 'Delete this requisition' : 'Nothing to delete yet — the requisition has not been saved'}
+            className={cn(
+              'label-mono uppercase border px-5 py-2 transition-colors duration-150 flex items-center gap-2',
+              !isEditing || saving || deleting
+                ? 'text-error/50 border-error/30 opacity-50 cursor-not-allowed'
+                : 'text-error border-error hover:bg-error/10',
+            )}
+          >
+            <Trash2 size={14} />
+            Delete Requisition
+          </button>
           <button
             type="button"
             onClick={handleSaveOffline}
@@ -1562,6 +1646,74 @@ function BuilderForm({
           </button>
         </div>
       </div>
+
+      {confirmingDelete && existing && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4"
+          role="alertdialog"
+          aria-modal="true"
+          aria-label="Delete requisition"
+          onClick={() => !deleting && setConfirmingDelete(false)}
+        >
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-md" />
+          <div
+            className="relative w-full max-w-md border border-error bg-surface-container-lowest shadow-2xl"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="p-6 space-y-4">
+              <div className="flex items-start gap-3">
+                <div className="size-10 shrink-0 flex items-center justify-center border border-error/40 bg-error/10 text-error">
+                  <AlertTriangle size={18} />
+                </div>
+                <div className="min-w-0">
+                  <h2 className="font-display font-bold text-on-surface leading-tight">
+                    Delete this requisition?
+                  </h2>
+                  <p className="label-mono text-error mt-1">This cannot be undone</p>
+                </div>
+              </div>
+              <div className="border border-outline-variant bg-surface px-4 py-3">
+                <p className="text-sm font-medium text-on-surface truncate">{existing.title}</p>
+                <p className="label-mono text-on-surface-variant mt-0.5">{existing.code}</p>
+              </div>
+              <p className="text-sm text-on-surface-variant leading-relaxed">
+                Deleting <span className="text-on-surface">{existing.code}</span> removes it from
+                your console permanently and takes its interview link offline. Interviews already
+                taken against it are kept and stay visible in the Interviews ledger — but you will
+                no longer be able to view or edit this requisition.
+              </p>
+            </div>
+            <div className="flex justify-end gap-3 px-6 py-4 border-t border-outline-variant">
+              <button
+                type="button"
+                onClick={() => setConfirmingDelete(false)}
+                disabled={deleting}
+                className="label-mono uppercase text-on-surface border border-outline-variant px-5 py-2 hover:bg-surface-container transition-colors duration-150 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDelete}
+                disabled={deleting}
+                className="label-mono uppercase font-bold text-on-error-container bg-error-container border border-error-container px-5 py-2 hover:bg-transparent hover:text-error hover:border-error transition-colors duration-150 flex items-center gap-2 disabled:opacity-60"
+              >
+                {deleting ? (
+                  <>
+                    Deleting…
+                    <Spinner size={14} className="text-on-error-container" />
+                  </>
+                ) : (
+                  <>
+                    <Trash2 size={14} />
+                    Delete Requisition
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {deployState !== 'idle' && (
         <div className="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-[#0c0e17]/95 backdrop-blur-md animate-fade-in select-none">
