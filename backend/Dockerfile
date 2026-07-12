@@ -7,12 +7,14 @@ ENV PYTHONUNBUFFERED=1 \
     UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy
 
-# System deps: resume text extraction (tesseract) + build headers for onnxruntime/insightface.
+# System deps: resume text extraction (tesseract) + build headers for
+# onnxruntime/insightface + ffmpeg for interview-recording transcode/peaks.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         tesseract-ocr \
         libgl1 \
         libglib2.0-0 \
         curl \
+        ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # uv for fast, reproducible installs.

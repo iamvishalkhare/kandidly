@@ -23,11 +23,14 @@ dependencies = [
     "jinja2>=3.1",
     "uuid7>=0.1.0",                   # uuid7() generator; app-layer UUIDv7 (SPEC D16)
     "redis>=5.2",
+    "beautifulsoup4>=4.12",          # HTML text extraction for source scraping (enrichment)
     "livekit-api>=0.8",              # AccessToken minting for candidate/observer room tokens
-    # Resume pipeline (SPEC §8.6.2) — [VERIFY-DOC]
+    # Resume pipeline (SPEC §8.6.2) — PDF/DOCX → Markdown, no LLM. [VERIFY-DOC]
     "pymupdf>=1.24",
+    "pymupdf4llm>=0.0.17,<0.1.0",    # PDF → Markdown (headings, lists, tables); 0.0.x = lightweight, no ML-layout/OCR
     "python-docx>=1.1",
-    "pytesseract>=0.3.13",
+    "mammoth>=1.8",                  # DOCX → Markdown
+    "pytesseract>=0.3.13",           # OCR fallback for scanned PDFs
     "pillow>=11.0",
     "psycopg[binary]>=3.3.4",
 ]

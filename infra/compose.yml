@@ -23,9 +23,16 @@ x-backend-env: &backend-env
   KANDIDLY_RECAPTCHA_SITE_KEY: ${KANDIDLY_RECAPTCHA_SITE_KEY:-}
   KANDIDLY_RECAPTCHA_SECRET_KEY: ${KANDIDLY_RECAPTCHA_SECRET_KEY:-}
   KANDIDLY_RECAPTCHA_MIN_SCORE: ${KANDIDLY_RECAPTCHA_MIN_SCORE:-0.5}
+  # Optional GitHub token — lifts the REST rate limit for source scraping.
+  KANDIDLY_GITHUB_TOKEN: ${KANDIDLY_GITHUB_TOKEN:-}
   KANDIDLY_ANTHROPIC_API_KEY: ${KANDIDLY_ANTHROPIC_API_KEY:-}
   KANDIDLY_OPENAI_API_KEY: ${KANDIDLY_OPENAI_API_KEY:-}
   KANDIDLY_GOOGLE_API_KEY: ${KANDIDLY_GOOGLE_API_KEY:-}
+  # OpenRouter — serves the non-realtime LLM roles (resume extract, plan, score…).
+  KANDIDLY_OPENROUTER_API_KEY: ${KANDIDLY_OPENROUTER_API_KEY:-}
+  # Vision model for proctoring snapshot analysis (full default here because an
+  # empty env var would override the config default with "").
+  KANDIDLY_VISION_LLM: ${KANDIDLY_VISION_LLM:-openrouter:qwen/qwen2.5-vl-72b-instruct}
   KANDIDLY_BASE_URL_WEB: ${KANDIDLY_BASE_URL_WEB:-http://localhost:5173}
   # LiveKit creds — the backend mints candidate room tokens (domain/interviews.py).
   KANDIDLY_LIVEKIT_URL: ${KANDIDLY_LIVEKIT_URL:-}
@@ -61,6 +68,25 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  # RedisInsight — official web UI for inspecting Redis (arq queues + live
+  # interview state). Preconfigures the `redis` connection via RI_REDIS_* so
+  # there's no manual "add database" step. UI at http://localhost:5540.
+  redis-ui:
+    image: docker.io/redis/redisinsight:3.6.0
+    environment:
+      RI_APP_PORT: "5540"
+      RI_ACCEPT_TERMS_AND_CONDITIONS: "true"
+      RI_REDIS_HOST: redis
+      RI_REDIS_PORT: "6379"
+      RI_REDIS_ALIAS: kandidly
+    ports:
+      - "5540:5540"
+    volumes:
+      - redisinsightdata:/data
+    depends_on:
+      redis:
+        condition: service_healthy
 
   minio:
     image: quay.io/minio/minio:RELEASE.2025-04-08T15-41-24Z
@@ -121,6 +147,10 @@ services:
       context: ..
       dockerfile: backend/Dockerfile
     command: ["uv", "run", "--package", "kandidly-backend", "arq", "app.jobs.worker.WorkerSettings"]
+    # arq holds a blocking redis connection and exits(1) if redis restarts (e.g. a
+    # `make up` that recreates redis). Without this it stays dead and jobs like
+    # parse_resume never run — leaving the candidate form stuck on "Parsing…".
+    restart: unless-stopped
     environment:
       <<: *backend-env
       KANDIDLY_DEEPGRAM_API_KEY: ${KANDIDLY_DEEPGRAM_API_KEY:-}
@@ -138,6 +168,8 @@ services:
       context: ..
       dockerfile: agent/Dockerfile
     command: ["uv", "run", "--package", "kandidly-agent", "python", "worker.py", "start"]
+    # Same rationale as worker: a redis restart must not permanently kill dispatch.
+    restart: unless-stopped
     environment:
       KANDIDLY_ENV: ${KANDIDLY_ENV:-dev}
       KANDIDLY_REDIS_URL: ${KANDIDLY_REDIS_URL:-redis://redis:6379/0}
@@ -180,5 +212,6 @@ services:
 volumes:
   pgdata:
   redisdata:
+  redisinsightdata:
   miniodata:
   webnodemodules:
