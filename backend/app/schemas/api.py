@@ -13,8 +13,7 @@ from app.schemas.interview_config import InterviewConfig
 
 # --- public (SPEC §12.2) ---------------------------------------------------
 class ConfigOut(BaseModel):
-    snapshot_min_s: int
-    snapshot_max_s: int
+    snapshot_interval_s: int
     livekit_url: str
     # Empty when reCAPTCHA is not configured; the client then skips the challenge.
     recaptcha_site_key: str = ""
@@ -56,6 +55,14 @@ class ConsentIn(BaseModel):
     consent_version: str
     recording_ack: bool
     monitoring_ack: bool
+
+
+class RecordingCompleteIn(BaseModel):
+    """Browser signals the recording is fully uploaded (SPEC §6.3 recordings)."""
+
+    chunks: int = Field(ge=0)
+    started_at: datetime
+    mime: str = "audio/webm"
 
 
 class JoinOut(BaseModel):

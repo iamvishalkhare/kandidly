@@ -72,18 +72,22 @@ class Aggregated:
 def aggregate_runs(runs: list[RunScore], *, coverage_gap: bool) -> Aggregated:
     """Median of valid runs; disagreement if (max−min) ≥ 2 across runs;
     needs_review on disagreement, any confidence < 0.3, or coverage gap
-    (SPEC §11.4). If all runs are invalid → needs_review, empty evidence,
-    median of raw scores (SPEC §11.3)."""
+    (SPEC §11.4). If all runs are invalid the criterion was not genuinely
+    assessable, so it scores the floor (anchor 1 → 0/100) — never the LLMs'
+    unverified raw numbers."""
     valid = [r for r in runs if r.valid]
-    raw_scores = [r.score for r in runs]
 
     if not valid:
         return Aggregated(
-            final_score=float(median(raw_scores)) if raw_scores else 1.0,
-            disagreement=(max(raw_scores) - min(raw_scores) >= 2) if raw_scores else False,
+            final_score=float(ANCHOR_MIN),
+            disagreement=False,
             needs_review=True,
             evidence=[],
-            rationale="All evidence quotes failed verification; scored on raw values.",
+            rationale=(
+                "Not assessable: the interview produced no verifiable evidence "
+                "for this criterion, so it is scored 0."
+            ),
+            method="unassessed",
         )
 
     valid_scores = [r.score for r in valid]

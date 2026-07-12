@@ -215,6 +215,10 @@ class Requisition(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    # Soft delete: hidden from every admin/console read, invite links stop
+    # resolving (status flips to 'closed'), but interviews keep their FK and
+    # stay fully viewable in the ledger. Never hard-deleted.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     __table_args__ = (
         CheckConstraint("status IN ('draft','open','paused','closed')", name="status_valid"),
         UniqueConstraint("org_id", "code", name="requisition_org_code"),
@@ -339,8 +343,20 @@ class FormSubmission(Base):
     resume_file_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("stored_files.id"), nullable=True
     )
+    # Resume as Markdown (converted locally, no LLM) — the sole resume representation
+    # fed to the plan generator and live interviewer (both LLMs). resume_parsed is
+    # deprecated (kept nullable for back-compat; no longer written).
+    resume_markdown: Mapped[str | None] = mapped_column(Text)
     resume_parsed: Mapped[dict | None] = mapped_column(JSONB)
     resume_parse_status: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=sa_text("'pending'")
+    )
+    # Scraped GitHub / website / blog sources (SPEC §8.6 enrichment). Shape:
+    # {"sources": [{"kind","url","status","digest"|"text","fetched_at"}]}.
+    enrichment: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=sa_text("'{}'::jsonb")
+    )
+    enrichment_status: Mapped[str] = mapped_column(
         Text, nullable=False, server_default=sa_text("'pending'")
     )
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -352,6 +368,10 @@ class FormSubmission(Base):
         CheckConstraint(
             "resume_parse_status IN ('pending','processing','done','failed','skipped')",
             name="parse_status_valid",
+        ),
+        CheckConstraint(
+            "enrichment_status IN ('pending','processing','done','failed','skipped')",
+            name="enrichment_status_valid",
         ),
         Index("ix_form_sub_answers", "answers", postgresql_using="gin"),
     )
@@ -409,6 +429,11 @@ class Interview(Base):
     # Precomputed player peaks: {"version":1,"peaks":[0..100 ints],"bins":N,
     # "duration_seconds":N}. The recording itself lives in S3.
     audio_waveform: Mapped[dict | None] = mapped_column(JSONB)
+    # Final LLM integrity verdict over the analyzed proctor frames
+    # (jobs/proctor_vision.review_integrity): 0-100 score, higher = cleaner,
+    # plus {summary, band, model, prompt_version, frames_reviewed, generated_at}.
+    integrity_score: Mapped[int | None] = mapped_column(Integer)
+    integrity_review: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = _ts_created()
     __table_args__ = (
         CheckConstraint(

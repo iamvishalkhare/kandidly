@@ -4,6 +4,8 @@ export type InterviewDecision = 'Shortlist' | 'Reject' | 'Hold';
 export interface InterviewRecord {
   id: string;
   candidateName: string;
+  /** Null for mock rows; the API always sends it. */
+  candidateEmail?: string | null;
   requisitionId: string;
   requisitionTitle: string;
   domain: string;
@@ -32,9 +34,30 @@ export interface ProctorFrame {
   id: string;
   at: string;
   seconds: number;
-  signal: 'Clear' | 'Attention shift' | 'Low light' | 'No face' | 'Multiple faces';
+  signal: 'Clear' | 'Attention shift' | 'Low light' | 'No face' | 'Multiple faces' | 'Pending';
   /** Presigned snapshot URL when a real proctor image exists. */
   imageUrl?: string;
+  /** Whether the vision job has assessed this frame yet. */
+  analyzed: boolean;
+  /** Vision job's one-line observation, when analyzed. */
+  note?: string | null;
+}
+
+export type IntegrityVerdict = 'clear' | 'warn' | 'flagged' | 'pending';
+
+export type IntegrityBand = '90-100' | '60-89' | '40-59' | 'under-40';
+
+export interface IntegritySummary {
+  verdict: IntegrityVerdict;
+  frameCount: number;
+  analyzedCount: number;
+  signalCounts: Record<string, number>;
+  eventCounts: Record<string, number>;
+  identityVerdict: string | null;
+  /** Final LLM integrity review; null until the review job has run. */
+  score: number | null;
+  band: IntegrityBand | null;
+  summary: string | null;
 }
 
 export interface InterviewReview extends InterviewRecord {
@@ -46,7 +69,8 @@ export interface InterviewReview extends InterviewRecord {
   assessmentSummary: string;
   comparisonScores: number[];
   transcript: TranscriptTurn[];
-  proctorFrames: ProctorFrame[];
+  // Proctor frames are fetched separately, paginated (useProctorFrames).
+  integrity: IntegritySummary | null;
   rubric: RubricAssessment[];
   /** Real recording peaks (0–100 ints) + duration when a recording exists. */
   waveformPeaks?: number[] | null;
@@ -144,19 +168,6 @@ const REVIEW_OVERRIDES: Partial<Record<string, Partial<InterviewReview>>> = {
   },
 };
 
-function buildProctorFrames(interviewId: string): ProctorFrame[] {
-  const hasFrames = interviewId !== 'int-1009';
-
-  if (!hasFrames) return [];
-
-  return Array.from({ length: 12 }, (_, i) => ({
-    id: `${interviewId}-frame-${i}`,
-    at: `00:${String(i * 10).padStart(2, '0')}`,
-    seconds: i * 10,
-    signal: i === 5 ? 'Attention shift' : i === 9 ? 'Low light' : 'Clear',
-  }));
-}
-
 function buildReview(record: InterviewRecord, index: number): InterviewReview {
   const score = Math.max(61, 91 - index * 3);
   const override = REVIEW_OVERRIDES[record.id];
@@ -171,7 +182,7 @@ function buildReview(record: InterviewRecord, index: number): InterviewReview {
     assessmentSummary: 'Automated assessment synthesized from the transcript, rubric evidence, and interview metadata.',
     comparisonScores: [54, 61, 66, 71, 75, 79, 82, 86, 89, 92, 95],
     transcript: BASE_TRANSCRIPT,
-    proctorFrames: buildProctorFrames(record.id),
+    integrity: null,
     rubric: BASE_RUBRIC.map(item => ({
       ...item,
       score: Math.max(58, Math.min(96, item.score - index * 2)),

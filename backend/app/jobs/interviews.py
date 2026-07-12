@@ -191,6 +191,16 @@ async def finalize_interview(ctx: dict, interview_id: str) -> None:
     if cfg.proctoring.identity_check:
         await enqueue("identity_check", interview_id)
 
+    # Vision pass over proctoring snapshots — self-gating (no-ops without
+    # unanalyzed frames or a vision provider key), so enqueue unconditionally.
+    await enqueue("analyze_snapshots", interview_id)
+
+    # Safety net for the browser-side recording: normally the client's
+    # /recording/complete call enqueues process_recording, but a killed tab
+    # never sends it. The job is idempotent, so double-enqueue is harmless;
+    # the deferral leaves room for trailing chunk uploads.
+    await enqueue("process_recording", interview_id, _defer_by=120)
+
 
 # ---------------------------------------------------------------------------
 # run_scoring — direct sequential path (Phase-3)
@@ -242,7 +252,7 @@ async def run_scoring(ctx: dict, interview_id: str) -> None:
 
     # --- 2. Check provider environment ------------------------------------
     try:
-        ensure_provider_env()
+        ensure_provider_env(settings.score_llm)
     except AppError as exc:
         log.error("run_scoring_no_provider", interview_id=interview_id, error=exc.message)
         async with SessionLocal() as db:
@@ -785,7 +795,7 @@ async def build_report(
 
     draft: ReportDraft | None = None
     try:
-        ensure_provider_env()
+        ensure_provider_env(settings.report_llm)
         agent = report_writer()
         result = await agent.run(filled_report_prompt)
         draft = getattr(result, "output", None) or getattr(result, "data", None)

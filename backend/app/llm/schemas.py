@@ -41,6 +41,17 @@ class ResumeParsed(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# Source summarizer — result of enrich_v1 (scraped GitHub / website / blog)
+# --------------------------------------------------------------------------- #
+class SourceDigest(BaseModel):
+    summary: str = Field(default="", max_length=1500)
+    technologies: list[str] = Field(default_factory=list)
+    projects: list[str] = Field(default_factory=list)
+    themes: list[str] = Field(default_factory=list)
+    notable_points: list[str] = Field(default_factory=list, max_length=12)
+
+
+# --------------------------------------------------------------------------- #
 # Plan generator — result of plan_v1 (SPEC §7.10 node fields minus ids/state)
 # --------------------------------------------------------------------------- #
 NodeType = Literal["intro", "topic", "candidate_questions", "wrap", "injected"]
@@ -101,3 +112,32 @@ class ReportDraft(BaseModel):
     summary: str
     strengths: list[str] = Field(default_factory=list)
     concerns: list[str] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------- #
+# Proctoring vision — result of proctor_vision_v1, one entry per frame.
+# `signal` mirrors the proctoring_snapshots.signal CHECK constraint exactly.
+# --------------------------------------------------------------------------- #
+SnapshotSignal = Literal["clear", "attention_shift", "low_light", "no_face", "multiple_faces"]
+
+
+class FrameAnalysisOut(BaseModel):
+    index: int = Field(ge=0)
+    signal: SnapshotSignal
+    faces_detected: int = Field(ge=0)
+    note: str = Field(max_length=200)
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
+class SnapshotBatchOut(BaseModel):
+    frames: list[FrameAnalysisOut]
+
+
+# --------------------------------------------------------------------------- #
+# Integrity reviewer — result of integrity_v1: the final verdict over every
+# frame analysis + proctoring events. Score 0-100, higher = cleaner; banded
+# by app.domain.integrity.integrity_band for display.
+# --------------------------------------------------------------------------- #
+class IntegrityReviewOut(BaseModel):
+    score: int = Field(ge=0, le=100)
+    summary: str = Field(max_length=700)

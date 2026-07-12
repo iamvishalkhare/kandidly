@@ -21,6 +21,7 @@ from app.db.models import (
 )
 from app.db.session import SessionLocal
 from app.domain import applications as apps
+from app.domain.interview_context import assemble_context, cache_context
 from app.domain.plan_build import assign_criteria_round_robin, load_fallback, write_plan
 from app.domain.plans import validate_plan
 from app.llm.clients import plan_generator
@@ -32,19 +33,22 @@ log = structlog.get_logger(__name__)
 _RESUME_WAIT_SECONDS = 90
 
 
-async def _wait_for_resume(db_factory, submission_id) -> None:
+_TERMINAL = ("done", "failed", "skipped")
+
+
+async def _wait_for_inputs(db_factory, submission_id) -> None:
+    """Wait (≤90s) for the resume parse AND source enrichment to reach a terminal
+    state, so the plan is built from the full context. Early-exits when there's
+    nothing left to wait for."""
     waited = 0
     while waited < _RESUME_WAIT_SECONDS:
         async with db_factory() as db:
             sub = await db.get(FormSubmission, submission_id)
-            # Stop waiting when there's nothing to wait for: no submission, no
-            # resume was uploaded (status stays None forever otherwise), or the
-            # parse already reached a terminal state.
-            if (
-                sub is None
-                or sub.resume_file_id is None
-                or sub.resume_parse_status in ("done", "failed", "skipped")
-            ):
+            if sub is None:
+                return
+            resume_ready = sub.resume_file_id is None or sub.resume_parse_status in _TERMINAL
+            enrichment_ready = sub.enrichment_status in _TERMINAL
+            if resume_ready and enrichment_ready:
                 return
         await asyncio.sleep(3)
         waited += 3
@@ -80,15 +84,16 @@ async def generate_plan(ctx: dict, interview_id: str) -> None:
         max_duration = cfg.max_duration_seconds
         difficulty_band = cfg.difficulty_band
 
-    # Wait for resume parse (outside the session so we don't hold a tx).
-    await _wait_for_resume(SessionLocal, submission_id)
+    # Wait for resume parse + source enrichment (outside the session, no held tx).
+    await _wait_for_inputs(SessionLocal, submission_id)
 
     # Attempt LLM plan (retry once on validation failure), else fallback.
     status = "ready"
     nodes: list[dict] | None = None
     async with SessionLocal() as db:
         submission = await db.get(FormSubmission, submission_id)  # type: ignore
-        resume_json = submission.resume_parsed
+        resume_md = submission.resume_markdown
+        sources_digest = _sources_digest((submission.enrichment or {}).get("sources") or [])
     for attempt in range(2):
         try:
             nodes = await _llm_plan(
@@ -96,7 +101,8 @@ async def generate_plan(ctx: dict, interview_id: str) -> None:
                 criteria,
                 answers,
                 field_hints,
-                resume_json,
+                resume_md,
+                sources_digest,
                 max_duration,
                 difficulty_band,
             )
@@ -130,11 +136,49 @@ async def generate_plan(ctx: dict, interview_id: str) -> None:
         app = await db.get(Application, interview.application_id)
         if app.state == "form_submitted":  # type: ignore
             await apps.transition(db, app.id, "plan_ready", "system", {"plan_status": status})  # type: ignore
+
+        # Cache the FULL interview context bundle (form + resume + scraped
+        # sources + requisition + seed questions) for fast room-load reads.
+        req = await db.get(Requisition, interview.requisition_id)  # type: ignore
+        submission = await db.get(FormSubmission, submission_id)  # type: ignore
+        bundle = assemble_context(
+            req=req,
+            submission=submission,
+            field_hints=field_hints,
+            plan_nodes=nodes,
+            status="ready",
+        )
+        await cache_context(interview_id, bundle)
         await db.commit()
 
 
+def _sources_digest(sources: list[dict]) -> list[dict]:
+    """Compact view of scraped sources for the plan prompt — drop failed ones and
+    heavy raw text, keep the LLM digest / GitHub structure / a short excerpt."""
+    out: list[dict] = []
+    for s in sources:
+        if s.get("status") != "done":
+            continue
+        item: dict = {"kind": s.get("kind"), "url": s.get("url")}
+        if s.get("digest"):
+            item["digest"] = s["digest"]
+        elif s.get("github"):
+            item["github"] = s["github"]
+        elif s.get("text"):
+            item["text"] = s["text"][:1500]
+        out.append(item)
+    return out
+
+
 async def _llm_plan(
-    interview_type, criteria, answers, field_hints, resume_json, max_duration, difficulty_band
+    interview_type,
+    criteria,
+    answers,
+    field_hints,
+    resume_md,
+    sources_digest,
+    max_duration,
+    difficulty_band,
 ) -> list[dict]:
     rubric_digest = [
         {"key": c.key, "name": c.name, "description": c.description, "weight": float(c.weight)}
@@ -151,7 +195,8 @@ async def _llm_plan(
         .replace("{interview_type}", interview_type)
         .replace("{rubric_digest}", str(rubric_digest))
         .replace("{form_digest}", str(form_digest))
-        .replace("{resume_json}", str(resume_json))
+        .replace("{resume_md}", resume_md or "")
+        .replace("{sources_json}", str(sources_digest))
         .replace("{difficulty_band}", str(difficulty_band))
         .replace("{budget_ceiling}", str(max_duration - 120))
     )

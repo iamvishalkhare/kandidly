@@ -68,6 +68,7 @@ CANDIDATES: list[tuple[str, str]] = [
     ("diego.alvarez@example.dev", "Diego Alvarez"),
     ("sara.kim@example.dev", "Sara Kim"),
     ("rahul.nair@example.dev", "Rahul Nair"),
+    ("lena.fischer@example.dev", "Lena Fischer"),
 ]
 
 
@@ -606,6 +607,15 @@ INTERVIEW_CASES: list[dict] = [
         "notes": "Exceptional depth on failure modes; fast-track to onsite.",
         "days_ago": 2,
         "duration_s": 1642,
+        # Clean integrity: every frame clear.
+        "snapshot_plan": [
+            (10, "clear", "Candidate centered, single face visible"),
+            (130, "clear", "Single face, steady gaze at screen"),
+            (250, "clear", "Single face, steady gaze at screen"),
+            (370, "clear", "Candidate centered, single face visible"),
+            (490, "clear", "Single face, steady gaze at screen"),
+            (610, "clear", "Candidate centered, single face visible"),
+        ],
     },
     {
         "email": "marcus.lee@example.dev",
@@ -705,16 +715,51 @@ INTERVIEW_CASES: list[dict] = [
         "notes": "Too junior for the senior bar on this requisition.",
         "days_ago": 12,
         "duration_s": 1103,
+        # Flagged integrity: sustained absence plus a second person in frame.
+        "snapshot_plan": [
+            (10, "clear", "Candidate centered, single face visible"),
+            (130, "no_face", "Chair empty, no person in frame"),
+            (250, "no_face", "Frame unchanged, candidate still absent"),
+            (370, "multiple_faces", "Second person visible behind candidate"),
+            (490, "clear", "Candidate centered, single face visible"),
+            (610, "attention_shift", "Gaze directed off-screen to the right"),
+        ],
+    },
+    {
+        # Still-evaluating case: interview finalized minutes ago, scoring in
+        # flight — no CriterionScore/Evaluation/Report rows, ScoringJob queued,
+        # snapshots unanalyzed. Exercises console polling + "pending" frames.
+        "email": "lena.fischer@example.dev",
+        "name": "Lena Fischer",
+        "story": (
+            "I run the search-indexing pipeline for a marketplace: a Flink "
+            "job consuming change streams and writing to OpenSearch, about "
+            "five thousand documents a second at peak."
+        ),
+        "decision": None,
+        "notes": None,
+        "days_ago": 0,
+        "duration_s": 1174,
+        "evaluating": True,
+        "snapshot_plan": [
+            (10, None, None),
+            (130, None, None),
+            (250, None, None),
+            (370, None, None),
+            (490, None, None),
+            (610, None, None),
+        ],
     },
 ]
 
-# Proctor snapshot cadence/signals for each seeded interview (offset seconds
-# from interview start → signal).
-SNAPSHOT_PLAN: list[tuple[int, str]] = [
-    (10, "clear"),
-    (130, "clear"),
-    (250, "attention_shift"),
-    (370, "clear"),
-    (490, "low_light"),
-    (610, "clear"),
+# Proctor snapshot cadence for seeded interviews: (offset seconds from
+# interview start, signal, vision note). `signal=None` seeds an unanalyzed
+# frame (pending vision analysis). Cases override via "snapshot_plan".
+DEFAULT_SNAPSHOT_PLAN: list[tuple[int, str | None, str | None]] = [
+    (10, "clear", "Candidate centered, single face visible"),
+    (130, "clear", "Single face, steady gaze at screen"),
+    (250, "attention_shift", "Gaze directed off-screen to the left"),
+    (370, "clear", "Single face, steady gaze at screen"),
+    (490, "low_light", "Face visible but underexposed"),
+    (610, "clear", "Candidate centered, single face visible"),
 ]

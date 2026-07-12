@@ -1,28 +1,24 @@
 """InterviewConfig (SPEC §8.4) stored on requisitions.interview_config (JSONB).
-max_duration_seconds is clamped to [600, 1800] — 30 min product ceiling (D6)."""
+max_duration_seconds is builder-configurable per requisition and clamped to
+[900, 5400] — 15-min floor, 90-min ceiling, 30-min default (supersedes D6)."""
 
 from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
 
 DIFFICULTY_AUTO = "auto"
 
 
 class ProctoringConfig(BaseModel):
     enabled: bool = True
-    snapshot_min_s: int = 5
-    snapshot_max_s: int = 10
+    # One webcam frame every N seconds. Older persisted configs carry
+    # snapshot_min_s/snapshot_max_s, which pydantic ignores as extra keys.
+    snapshot_interval_s: int = 10
     browser_events: bool = True
     audio_diarization: bool = True
     identity_check: bool = True
-
-    @model_validator(mode="after")
-    def _min_le_max(self) -> ProctoringConfig:
-        if self.snapshot_min_s > self.snapshot_max_s:
-            raise ValueError("snapshot_min_s must be <= snapshot_max_s")
-        return self
 
 
 class InterviewConfig(BaseModel):
@@ -40,8 +36,8 @@ class InterviewConfig(BaseModel):
     @field_validator("max_duration_seconds")
     @classmethod
     def _clamp_duration(cls, v: int) -> int:
-        # D6: 30-min ceiling, 10-min floor.
-        return max(600, min(1800, v))
+        # 15-min floor, 90-min ceiling (builder offers 15–90 minutes).
+        return max(900, min(5400, v))
 
     @field_validator("difficulty_band")
     @classmethod

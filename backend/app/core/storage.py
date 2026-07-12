@@ -65,6 +65,15 @@ async def presign_get(bucket: str, key: str, ttl: int = PRESIGN_TTL, public: boo
         )
 
 
+async def list_keys(bucket: str, prefix: str) -> list[str]:
+    async with _session().client("s3", **_client_kwargs()) as s3:
+        keys: list[str] = []
+        paginator = s3.get_paginator("list_objects_v2")
+        async for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+            keys.extend(obj["Key"] for obj in page.get("Contents", []))
+        return keys
+
+
 def resume_key(application_id: UUID, uid: UUID, ext: str) -> str:
     return f"{application_id}/{uid}.{ext.lstrip('.')}"
 
@@ -79,6 +88,16 @@ def selfie_key(application_id: UUID) -> str:
 
 def recording_key(interview_id: UUID, ext: str = "ogg") -> str:
     return f"{interview_id}/audio.{ext.lstrip('.')}"
+
+
+# Browser-uploaded MediaRecorder chunks, transient — deleted by the
+# process_recording job once the final audio artifact is written.
+def recording_chunk_key(interview_id: UUID, seq: int, ext: str = "webm") -> str:
+    return f"{interview_id}/chunks/{seq:05d}.{ext.lstrip('.')}"
+
+
+def recording_manifest_key(interview_id: UUID) -> str:
+    return f"{interview_id}/chunks/manifest.json"
 
 
 def report_key(interview_id: UUID) -> str:

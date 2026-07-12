@@ -27,6 +27,8 @@ PROMPT_VERSIONS = {
     "score": "v1",
     "report": "v1",
     "annotate": "v1",
+    "proctor_vision": "v1",
+    "integrity": "v1",
 }
 
 

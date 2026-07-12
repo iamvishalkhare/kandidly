@@ -39,6 +39,7 @@ from app.core.config import settings
 from app.core.ids import new_id
 from app.db import seed_fixtures as fx
 from app.db.base import Base
+from app.domain.integrity import integrity_band
 from app.db.models import (
     Application,
     ApplicationEvent,
@@ -182,6 +183,7 @@ FIELD_HINTS = {
     },
     "domains": {"use_in_plan": True, "role": "context"},
     "years_python": {"use_in_plan": True, "role": "difficulty_signal"},
+    "github": {"use_in_plan": False, "role": "github_url"},
     "full_name": {"use_in_plan": False},
 }
 
@@ -664,10 +666,13 @@ async def _seed_pipeline(db, case: dict, req, template, link, recruiter, media_o
     started = now - timedelta(days=case["days_ago"], hours=3)
     ended = started + timedelta(seconds=case["duration_s"])
     reviewed = case["decision"] is not None
-    final_state = "reviewed" if reviewed else "scored"
+    # An "evaluating" case stops at completed with scoring still in flight:
+    # ScoringJob queued, no CriterionScore/Evaluation/Report rows.
+    evaluating = bool(case.get("evaluating"))
+    final_state = "completed" if evaluating else ("reviewed" if reviewed else "scored")
 
     # Application with a realistic state history.
-    chain = _STATE_CHAIN + (["reviewed"] if reviewed else [])
+    chain = _STATE_CHAIN[:-1] if evaluating else _STATE_CHAIN + (["reviewed"] if reviewed else [])
     t0 = started - timedelta(days=1)
     stamps: dict[str, str] = {}
     app = Application(
@@ -801,14 +806,23 @@ async def _seed_pipeline(db, case: dict, req, template, link, recruiter, media_o
     job = ScoringJob(
         id=new_id(),
         interview_id=interview.id,
-        status="done",
+        status="queued" if evaluating else "done",
         runs_requested=3,
         model="seed",
         prompt_version="v1",
-        completed_at=ended + timedelta(minutes=18),
+        completed_at=None if evaluating else ended + timedelta(minutes=18),
     )
     db.add(job)
     await db.flush()
+
+    if evaluating:
+        print(
+            f"evaluating case: {case['name']} interview {interview.id} — "
+            "scoring_status stays 'evaluating' until run_scoring is enqueued "
+            f"(e.g. enqueue('run_scoring', '{interview.id}'); needs KANDIDLY_OPENROUTER_API_KEY)"
+        )
+        await _seed_media(db, case, interview, app, candidate, media_ok)
+        return True
 
     # Candidate answer turns to quote as evidence per criterion.
     evidence_turn = {
@@ -899,6 +913,13 @@ async def _seed_pipeline(db, case: dict, req, template, link, recruiter, media_o
             )
         )
 
+    await _seed_media(db, case, interview, app, candidate, media_ok)
+    return True
+
+
+async def _seed_media(db, case: dict, interview, app, candidate, media_ok: bool) -> None:
+    """Proctoring event, snapshot roll, and generated audio for one pipeline."""
+    started = interview.started_at
     db.add(
         ProctoringEvent(
             interview_id=interview.id,
@@ -911,58 +932,106 @@ async def _seed_pipeline(db, case: dict, req, template, link, recruiter, media_o
         )
     )
 
-    if media_ok:
-        # Placeholder proctor snapshots.
-        for offset_s, signal in fx.SNAPSHOT_PLAN:
-            captured = started + timedelta(seconds=offset_s)
-            key = storage.snapshot_key(interview.id, int(captured.timestamp() * 1000))
-            await storage.put_object(storage.BUCKET_SNAPSHOTS, key, WEBP_1PX, "image/webp")
-            f = StoredFile(
-                id=new_id(),
-                bucket=storage.BUCKET_SNAPSHOTS,
-                key=key,
-                mime="image/webp",
-                bytes=len(WEBP_1PX),
-                created_by=candidate.id,
-            )
-            db.add(f)
-            await db.flush()
-            db.add(
-                ProctoringSnapshot(
-                    id=new_id(),
-                    interview_id=interview.id,
-                    file_id=f.id,
-                    captured_at=captured,
-                    faces_detected=1,
-                    face_present=True,
-                    analyzed=True,
-                    signal=signal,
-                )
-            )
+    if not media_ok:
+        return
 
-        # Generated audio recording + waveform peaks.
-        variant = case["days_ago"] % 6
-        audio, peaks = _gen_wav(variant)
-        key = storage.recording_key(interview.id, "wav")
-        await storage.put_object(storage.BUCKET_RECORDINGS, key, audio, "audio/wav")
+    # Placeholder proctor snapshots. signal=None seeds a frame still pending
+    # vision analysis (analyzed=False, no client_meta.vision).
+    plan = case.get("snapshot_plan", fx.DEFAULT_SNAPSHOT_PLAN)
+    for offset_s, signal, note in plan:
+        captured = started + timedelta(seconds=offset_s)
+        key = storage.snapshot_key(interview.id, int(captured.timestamp() * 1000))
+        await storage.put_object(storage.BUCKET_SNAPSHOTS, key, WEBP_1PX, "image/webp")
         f = StoredFile(
             id=new_id(),
-            bucket=storage.BUCKET_RECORDINGS,
+            bucket=storage.BUCKET_SNAPSHOTS,
             key=key,
-            mime="audio/wav",
-            bytes=len(audio),
+            mime="image/webp",
+            bytes=len(WEBP_1PX),
             created_by=candidate.id,
         )
         db.add(f)
         await db.flush()
-        interview.audio_recording_id = f.id
-        interview.audio_waveform = {
-            "version": 1,
-            "peaks": peaks,
-            "bins": len(peaks),
-            "duration_seconds": 30,
+        analyzed = signal is not None
+        db.add(
+            ProctoringSnapshot(
+                id=new_id(),
+                interview_id=interview.id,
+                file_id=f.id,
+                captured_at=captured,
+                faces_detected=(
+                    {"no_face": 0, "multiple_faces": 2}.get(signal, 1) if analyzed else None
+                ),
+                face_present=(signal != "no_face") if analyzed else None,
+                analyzed=analyzed,
+                signal=signal,
+                client_meta=(
+                    {
+                        "vision": {
+                            "note": note,
+                            "confidence": 0.9,
+                            "model": "seed",
+                            "prompt_version": "v1",
+                        }
+                    }
+                    if analyzed and note
+                    else {}
+                ),
+            )
+        )
+
+    # Final integrity verdict the review_integrity job would produce, derived
+    # from the plan so seeded review pages render a settled verdict (plans with
+    # only signal=None frames — still evaluating — stay unreviewed).
+    signals = [signal for _o, signal, _n in plan if signal is not None]
+    if signals:
+        if any(s in ("no_face", "multiple_faces") for s in signals):
+            score = 34
+            summary = (
+                "Candidate absent from two consecutive frames and a second person "
+                "visible around 370s; sustained anomalies warrant close review."
+            )
+        elif any(s in ("attention_shift", "low_light") for s in signals):
+            score = 68
+            summary = (
+                "Mostly clear frames with an isolated attention shift and one "
+                "underexposed frame; nothing sustained or corroborated."
+            )
+        else:
+            score = 95
+            summary = "Single attentive person in every frame; no anomalies observed."
+        interview.integrity_score = score
+        interview.integrity_review = {
+            "summary": summary,
+            "band": integrity_band(score),
+            "model": "seed",
+            "prompt_version": "integrity_v1",
+            "frames_reviewed": len(signals),
+            "generated_at": datetime.now(UTC).isoformat(),
         }
-    return True
+
+    # Generated audio recording + waveform peaks.
+    variant = case["days_ago"] % 6
+    audio, peaks = _gen_wav(variant)
+    key = storage.recording_key(interview.id, "wav")
+    await storage.put_object(storage.BUCKET_RECORDINGS, key, audio, "audio/wav")
+    f = StoredFile(
+        id=new_id(),
+        bucket=storage.BUCKET_RECORDINGS,
+        key=key,
+        mime="audio/wav",
+        bytes=len(audio),
+        created_by=candidate.id,
+    )
+    db.add(f)
+    await db.flush()
+    interview.audio_recording_id = f.id
+    interview.audio_waveform = {
+        "version": 1,
+        "peaks": peaks,
+        "bins": len(peaks),
+        "duration_seconds": 30,
+    }
 
 
 # --------------------------------------------------------------------------- #

@@ -68,14 +68,17 @@ def test_median_and_disagreement():
     assert agg.needs_review is True
 
 
-def test_all_invalid_runs_need_review_empty_evidence():
+def test_all_invalid_runs_score_floor():
+    # No verifiable evidence anywhere → not assessable → anchor floor (0/100),
+    # never the LLMs' unverified raw numbers.
     runs = [RunScore(i, 3, 0.9, [{"turn_id": "t1", "quote": "fake"}], "r") for i in range(3)]
     for r in runs:
         filter_evidence(r, TURN_TEXT)
     agg = aggregate_runs(runs, coverage_gap=False)
     assert agg.needs_review is True
     assert agg.evidence == []
-    assert agg.final_score == 3.0
+    assert agg.final_score == 1.0
+    assert agg.method == "unassessed"
 
 
 def test_coverage_gap_forces_review():

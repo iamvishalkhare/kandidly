@@ -9,24 +9,40 @@ import {
   ArrowLeft,
   Bot,
   Camera,
+  Check,
   CheckCircle2,
   ChevronDown,
   Clock3,
+  Copy,
   FileText,
   Gauge,
   Pause,
   Play,
+  RotateCcw,
+  RotateCw,
   ShieldCheck,
   UserCheck,
   XCircle,
 } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useWavesurfer } from '@wavesurfer/react';
 import Hover from 'wavesurfer.js/plugins/hover';
 import { cn } from '../../lib/utils';
-import { useToast } from '../../components/ui';
+import { Modal, useToast } from '../../components/ui';
 import ConsoleLayout from './ConsoleLayout';
-import type { TranscriptTurn } from './interviewData';
-import { useConsoleReview, useReviewDecision, type ReviewData } from '../../lib/consoleApi';
+import type {
+  IntegrityBand,
+  IntegritySummary,
+  IntegrityVerdict,
+  ProctorFrame,
+  TranscriptTurn,
+} from './interviewData';
+import {
+  useConsoleReview,
+  useProctorFrames,
+  useReviewDecision,
+  type ReviewData,
+} from '../../lib/consoleApi';
 
 type InterviewReviewData = ReviewData;
 
@@ -40,6 +56,24 @@ const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
 });
 
 type ReviewDecision = 'Shortlist' | 'Reject' | 'Hold';
+
+// Decision buttons stay in their semantic color; the chosen one is filled.
+const DECISION_BUTTON_CLASS: Record<ReviewDecision, { idle: string; active: string }> = {
+  Shortlist: {
+    idle: 'border-outline-variant text-[var(--emerald-chip-text)] hover:border-[var(--emerald-chip-text)] hover:bg-[var(--emerald-chip-bg)]',
+    active:
+      'border-[var(--emerald-chip-text)] bg-[var(--emerald-chip-bg)] text-[var(--emerald-chip-text)]',
+  },
+  Hold: {
+    idle: 'border-outline-variant text-[var(--amber-chip-text)] hover:border-[var(--amber-chip-text)] hover:bg-[var(--amber-chip-bg)]',
+    active:
+      'border-[var(--amber-chip-text)] bg-[var(--amber-chip-bg)] text-[var(--amber-chip-text)]',
+  },
+  Reject: {
+    idle: 'border-outline-variant text-[var(--red-chip-text)] hover:border-[var(--red-chip-text)] hover:bg-[var(--red-chip-bg)]',
+    active: 'border-[var(--red-chip-text)] bg-[var(--red-chip-bg)] text-[var(--red-chip-text)]',
+  },
+};
 
 function formatTimeline(seconds: number) {
   const safeSeconds = Math.max(0, Math.floor(seconds));
@@ -57,7 +91,7 @@ function StatusPill({ status }: { status: string }) {
         'inline-flex border px-2 py-1 label-mono',
         done
           ? 'border-[var(--emerald-chip-text)] bg-[var(--emerald-chip-bg)] text-[var(--emerald-chip-text)]'
-          : 'border-[var(--amber-chip-text)] bg-[var(--amber-chip-bg)] text-[var(--amber-chip-text)]',
+          : 'border-[var(--amber-chip-text)] bg-[var(--amber-chip-bg)] text-[var(--amber-chip-text)] animate-pulse',
       )}
     >
       {status}
@@ -65,11 +99,50 @@ function StatusPill({ status }: { status: string }) {
   );
 }
 
-function EvidenceMetric({ label, value }: { label: string; value: string }) {
+function CopyButton({ text, label }: { text: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(text);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        } catch {
+          /* clipboard unavailable (insecure context) — nothing to copy to */
+        }
+      }}
+      aria-label={label}
+      title={label}
+      className="shrink-0 text-on-surface-variant hover:text-primary-fixed-dim transition-colors duration-150"
+    >
+      {copied ? <Check size={14} className="text-[var(--emerald-chip-text)]" /> : <Copy size={14} />}
+    </button>
+  );
+}
+
+function EvidenceMetric({
+  label,
+  value,
+  sub,
+  copyableSub = false,
+}: {
+  label: string;
+  value: string;
+  sub?: string | null;
+  copyableSub?: boolean;
+}) {
   return (
     <div className="bg-surface px-4 py-3">
       <p className="label-mono text-on-surface-variant">{label}</p>
       <p className="mt-1 text-on-surface font-medium">{value}</p>
+      {sub && (
+        <div className="mt-0.5 flex items-center gap-2">
+          <p className="text-sm text-on-surface-variant break-all">{sub}</p>
+          {copyableSub && <CopyButton text={sub} label={`Copy ${sub}`} />}
+        </div>
+      )}
     </div>
   );
 }
@@ -127,6 +200,8 @@ function ScoreDistribution({ interview }: { interview: InterviewReviewData }) {
   );
 }
 
+const PLAYBACK_RATES = [1, 1.25, 1.5, 2];
+
 function WaveformRecording({
   interview,
   currentSeconds,
@@ -139,7 +214,13 @@ function WaveformRecording({
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const waveformRef = useRef<HTMLDivElement | null>(null);
   const [playing, setPlaying] = useState(false);
-  const durationSeconds = Math.max(1, interview.transcript.at(-1)?.seconds ?? 1);
+  const [rate, setRate] = useState(1);
+  const queryClient = useQueryClient();
+  const audioErrorsRef = useRef(0);
+  const durationSeconds = Math.max(
+    1,
+    interview.audioDurationSeconds ?? interview.transcript.at(-1)?.seconds ?? 1,
+  );
 
   // Real recording peaks when available (0–100 ints from the backend);
   // deterministic placeholder bars otherwise so the timeline stays usable.
@@ -177,21 +258,25 @@ function WaveformRecording({
     plugins,
   });
 
-  // The waveform is driven by peaks/duration only (no real media), so it stays a controlled
-  // component: external seeks move the cursor, and user drags/clicks report back via onSeek.
+  // The waveform stays a controlled visualization (peaks/duration only, no
+  // media bound): external seeks move the cursor AND the hidden audio element
+  // (drift-corrected so transcript/waveform clicks work mid-playback), while
+  // the audio's own progress drives currentSeconds via onTimeUpdate.
   useEffect(() => {
     wavesurfer?.setTime(currentSeconds);
+    const audio = audioRef.current;
+    if (
+      audio &&
+      Number.isFinite(audio.duration) &&
+      Math.abs(audio.currentTime - currentSeconds) > 1.5
+    ) {
+      audio.currentTime = Math.min(Math.max(0, currentSeconds), Math.max(0, audio.duration - 0.05));
+    }
   }, [wavesurfer, currentSeconds]);
 
   useEffect(() => {
     return wavesurfer?.on('interaction', newTime => onSeek(newTime));
   }, [wavesurfer, onSeek]);
-
-  const seekAudio = (seconds: number) => {
-    if (audioRef.current && Number.isFinite(audioRef.current.duration) && audioRef.current.duration > seconds) {
-      audioRef.current.currentTime = seconds;
-    }
-  };
 
   const togglePlayback = async () => {
     if (!audioRef.current) return;
@@ -202,10 +287,60 @@ function WaveformRecording({
       return;
     }
 
-    seekAudio(currentSeconds);
+    audioRef.current.playbackRate = rate;
+    if (
+      Number.isFinite(audioRef.current.duration) &&
+      Math.abs(audioRef.current.currentTime - currentSeconds) > 1.5
+    ) {
+      audioRef.current.currentTime = Math.min(currentSeconds, audioRef.current.duration - 0.05);
+    }
     await audioRef.current.play().catch(() => undefined);
     setPlaying(!audioRef.current.paused);
   };
+
+  const skip = (delta: number) => {
+    onSeek(Math.min(durationSeconds, Math.max(0, currentSeconds + delta)));
+  };
+
+  const cycleRate = () => {
+    const next = PLAYBACK_RATES[(PLAYBACK_RATES.indexOf(rate) + 1) % PLAYBACK_RATES.length];
+    setRate(next);
+    if (audioRef.current) audioRef.current.playbackRate = next;
+  };
+
+  // Keyboard transport: Space play/pause, ←/→ ±10s, Shift+←/→ ±30s. The
+  // handler lives in a ref so the window listener is attached exactly once.
+  const keyHandlerRef = useRef<(e: KeyboardEvent) => void>(() => {});
+  keyHandlerRef.current = (e: KeyboardEvent) => {
+    const target = e.target as HTMLElement | null;
+    if (
+      target &&
+      (target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.tagName === 'SELECT' ||
+        target.isContentEditable)
+    ) {
+      return;
+    }
+    if (e.code === 'Space') {
+      e.preventDefault();
+      void togglePlayback();
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      skip(e.shiftKey ? -30 : -10);
+    } else if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      skip(e.shiftKey ? 30 : 10);
+    }
+  };
+  useEffect(() => {
+    const listener = (e: KeyboardEvent) => keyHandlerRef.current(e);
+    window.addEventListener('keydown', listener);
+    return () => window.removeEventListener('keydown', listener);
+  }, []);
+
+  const transportButton =
+    'size-9 shrink-0 border border-outline-variant text-on-surface-variant hover:border-primary-container hover:text-primary-fixed-dim transition-colors duration-150 flex items-center justify-center';
 
   return (
     <div className="mt-5 border-t border-outline-variant pt-4 text-left">
@@ -216,14 +351,44 @@ function WaveformRecording({
             {formatTimeline(currentSeconds)} / {formatTimeline(durationSeconds)}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={togglePlayback}
-          className="size-9 shrink-0 border border-outline-variant text-on-surface-variant hover:border-primary-container hover:text-primary-fixed-dim transition-colors duration-150 flex items-center justify-center"
-          aria-label={playing ? 'Pause recording' : 'Play recording'}
-        >
-          {playing ? <Pause size={16} /> : <Play size={16} />}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => skip(-10)}
+            className={transportButton}
+            aria-label="Back 10 seconds"
+            title="Back 10s (←)"
+          >
+            <RotateCcw size={15} />
+          </button>
+          <button
+            type="button"
+            onClick={togglePlayback}
+            className={transportButton}
+            aria-label={playing ? 'Pause recording' : 'Play recording'}
+            title="Play/Pause (Space)"
+          >
+            {playing ? <Pause size={16} /> : <Play size={16} />}
+          </button>
+          <button
+            type="button"
+            onClick={() => skip(10)}
+            className={transportButton}
+            aria-label="Forward 10 seconds"
+            title="Forward 10s (→)"
+          >
+            <RotateCw size={15} />
+          </button>
+          <button
+            type="button"
+            onClick={cycleRate}
+            className={cn(transportButton, 'w-12 label-mono tabular')}
+            aria-label={`Playback speed ${rate}x`}
+            title="Cycle playback speed"
+          >
+            {rate}×
+          </button>
+        </div>
       </div>
 
       <div
@@ -244,8 +409,27 @@ function WaveformRecording({
         <audio
           ref={audioRef}
           src={interview.audioSrc}
+          preload="auto"
+          onTimeUpdate={e => {
+            if (!e.currentTarget.paused) onSeek(e.currentTarget.currentTime);
+          }}
+          onPlay={e => {
+            e.currentTarget.playbackRate = rate;
+            setPlaying(true);
+          }}
           onEnded={() => setPlaying(false)}
           onPause={() => setPlaying(false)}
+          onError={() => {
+            // The presigned URL expires after 10 minutes; refetching the
+            // review mints a fresh one. Cap invalidations so a genuinely
+            // missing file doesn't refetch-loop.
+            if (audioErrorsRef.current < 2) {
+              audioErrorsRef.current += 1;
+              void queryClient.invalidateQueries({
+                queryKey: ['console', 'interviews', interview.id],
+              });
+            }
+          }}
           className="hidden"
         />
       )}
@@ -264,13 +448,56 @@ function AudioTranscript({
   onJump: (turn: TranscriptTurn) => void;
   transcriptRefs: MutableRefObject<Record<string, HTMLDivElement | null>>;
 }) {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const userScrollingRef = useRef(false);
+  const programmaticRef = useRef(false);
+  const scrollIdleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Manual scrolling suppresses auto-follow for a few seconds so the reader
+  // isn't yanked back to the playhead mid-read.
+  const handleScroll = () => {
+    if (programmaticRef.current) return;
+    userScrollingRef.current = true;
+    if (scrollIdleTimer.current) clearTimeout(scrollIdleTimer.current);
+    scrollIdleTimer.current = setTimeout(() => {
+      userScrollingRef.current = false;
+    }, 3000);
+  };
+
+  // Keep the active row centered — scrolling only this container (never
+  // scrollIntoView, which would drag the page under the sticky header).
+  useEffect(() => {
+    if (!activeTranscriptId || userScrollingRef.current) return;
+    const container = containerRef.current;
+    const row = transcriptRefs.current[activeTranscriptId];
+    if (!container || !row) return;
+    const rowTop =
+      row.getBoundingClientRect().top -
+      container.getBoundingClientRect().top +
+      container.scrollTop;
+    programmaticRef.current = true;
+    container.scrollTo({
+      top: rowTop - container.clientHeight / 2 + row.clientHeight / 2,
+      behavior: 'smooth',
+    });
+    // Smooth scroll emits many scroll events; release the flag once settled.
+    const settle = setTimeout(() => {
+      programmaticRef.current = false;
+    }, 600);
+    return () => clearTimeout(settle);
+  }, [activeTranscriptId, transcriptRefs]);
+
   return (
     <section className="border border-outline-variant bg-surface">
       <div className="border-b border-outline-variant px-4 py-3 flex items-center gap-2">
         <FileText size={16} className="text-primary-fixed-dim" />
         <h2 className="label-mono text-on-surface">Transcript</h2>
       </div>
-      <div className="max-h-[560px] overflow-y-auto divide-y divide-outline-variant">
+      <div
+        ref={containerRef}
+        onScroll={handleScroll}
+        className="max-h-[560px] overflow-y-auto divide-y divide-outline-variant"
+      >
         {interview.transcript.map(turn => (
           <div
             key={turn.id}
@@ -278,7 +505,7 @@ function AudioTranscript({
               transcriptRefs.current[turn.id] = node;
             }}
             className={cn(
-              'grid grid-cols-1 md:grid-cols-[96px_120px_1fr] gap-3 px-4 py-4 transition-colors duration-150',
+              'grid grid-cols-1 md:grid-cols-[96px_160px_1fr] gap-3 px-4 py-4 transition-colors duration-150',
               activeTranscriptId === turn.id ? 'bg-primary-container/10' : 'bg-surface',
             )}
           >
@@ -289,9 +516,18 @@ function AudioTranscript({
             >
               {turn.at}
             </button>
-            <div className="flex items-center gap-2 label-mono text-on-surface-variant">
-              {turn.speaker === 'AI' ? <Bot size={14} /> : <UserCheck size={14} />}
-              {turn.speaker}
+            <div className="flex items-center gap-2 label-mono text-on-surface-variant min-w-0">
+              {turn.speaker === 'AI' ? (
+                <Bot size={14} className="shrink-0" />
+              ) : (
+                <UserCheck size={14} className="shrink-0" />
+              )}
+              <span
+                className="truncate"
+                title={turn.speaker === 'AI' ? 'Kandidly AI' : interview.candidateName}
+              >
+                {turn.speaker === 'AI' ? 'Kandidly AI' : interview.candidateName}
+              </span>
             </div>
             <p className="text-on-surface">{turn.text}</p>
           </div>
@@ -301,7 +537,102 @@ function AudioTranscript({
   );
 }
 
+const INTEGRITY_CHIP: Record<IntegrityVerdict, { label: string; className: string }> = {
+  clear: {
+    label: 'Integrity: Clear',
+    className:
+      'border-[var(--emerald-chip-text)] bg-[var(--emerald-chip-bg)] text-[var(--emerald-chip-text)]',
+  },
+  warn: {
+    label: 'Integrity: Review',
+    className:
+      'border-[var(--amber-chip-text)] bg-[var(--amber-chip-bg)] text-[var(--amber-chip-text)]',
+  },
+  flagged: {
+    label: 'Integrity: Flagged',
+    className: 'border-[var(--red-chip-text)] bg-[var(--red-chip-bg)] text-[var(--red-chip-text)]',
+  },
+  pending: {
+    label: 'Integrity: Pending',
+    className: 'border-outline-variant text-on-surface-variant animate-pulse',
+  },
+};
+
+function signalClass(signal: ProctorFrame['signal']): string {
+  if (signal === 'Pending') return 'text-on-surface-variant';
+  if (signal === 'Clear') return 'text-[var(--emerald-chip-text)]';
+  if (signal === 'No face' || signal === 'Multiple faces') return 'text-[var(--red-chip-text)]';
+  return 'text-[var(--amber-chip-text)]';
+}
+
+// Band drives the chip color only; the label shows just the score.
+const INTEGRITY_BAND_CLASS: Record<IntegrityBand, string> = {
+  '90-100':
+    'border-[var(--emerald-chip-text)] bg-[var(--emerald-chip-bg)] text-[var(--emerald-chip-text)]',
+  '60-89':
+    'border-[var(--amber-chip-text)] bg-[var(--amber-chip-bg)] text-[var(--amber-chip-text)]',
+  '40-59': 'border-[var(--red-chip-text)] bg-[var(--red-chip-bg)] text-[var(--red-chip-text)]',
+  'under-40': 'border-[var(--red-chip-text)] bg-[var(--red-chip-bg)] text-[var(--red-chip-text)]',
+};
+
+function integrityChip(
+  integrity: IntegritySummary | null,
+  analyzing: boolean,
+): { label: string; className: string } | null {
+  if (!integrity) return null;
+  if (integrity.score != null && integrity.band) {
+    return {
+      label: `Integrity ${integrity.score}/100`,
+      className: INTEGRITY_BAND_CLASS[integrity.band],
+    };
+  }
+  if (analyzing) {
+    return {
+      label: 'Integrity: Analyzing…',
+      className: 'border-outline-variant text-on-surface-variant animate-pulse',
+    };
+  }
+  return INTEGRITY_CHIP[integrity.verdict];
+}
+
 function ProctorRoll({ interview }: { interview: InterviewReviewData }) {
+  const [zoomFrame, setZoomFrame] = useState<ProctorFrame | null>(null);
+  const integrity = interview.integrity;
+  // Frame analysis has started but the final LLM verdict hasn't landed yet.
+  const analyzing =
+    !!integrity &&
+    integrity.frameCount > 0 &&
+    integrity.analyzedCount > 0 &&
+    integrity.score == null;
+  const chip = integrityChip(integrity, analyzing);
+
+  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } = useProctorFrames(
+    interview.id,
+    analyzing,
+  );
+  const frames = data?.frames ?? [];
+  const frameCount = integrity?.frameCount ?? data?.total ?? 0;
+
+  // Infinite scroll: fetch the next page when the sentinel at the right end
+  // of the strip comes within one viewport of view.
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const root = scrollerRef.current;
+    const sentinel = sentinelRef.current;
+    if (!root || !sentinel) return;
+    const observer = new IntersectionObserver(
+      entries => {
+        if (entries.some(entry => entry.isIntersecting) && hasNextPage && !isFetchingNextPage) {
+          void fetchNextPage();
+        }
+      },
+      { root, rootMargin: '0px 480px 0px 0px' },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [fetchNextPage, hasNextPage, isFetchingNextPage, frames.length]);
+
   return (
     <section className="border border-outline-variant bg-surface">
       <div className="border-b border-outline-variant px-4 py-3 flex items-center justify-between gap-3">
@@ -309,16 +640,33 @@ function ProctorRoll({ interview }: { interview: InterviewReviewData }) {
           <Camera size={16} className="text-primary-fixed-dim" />
           <h2 className="label-mono text-on-surface">Proctored Images</h2>
         </div>
-        <span className="label-mono text-on-surface-variant">10 second interval</span>
+        <div className="flex items-center gap-2">
+          {chip && (
+            <span className={cn('inline-flex border px-2 py-1 label-mono', chip.className)}>
+              {chip.label}
+            </span>
+          )}
+          <span className="label-mono text-on-surface-variant">
+            {integrity && integrity.frameCount > 0
+              ? `${integrity.analyzedCount}/${integrity.frameCount} analyzed`
+              : `${frameCount} frames`}
+          </span>
+        </div>
       </div>
-      {interview.proctorFrames.length > 0 ? (
-        <div className="flex gap-3 overflow-x-auto p-4">
-          {interview.proctorFrames.map((frame, i) => (
+      {integrity?.summary && (
+        <p className="border-b border-outline-variant px-4 py-3 text-sm text-on-surface-variant">
+          {integrity.summary}
+        </p>
+      )}
+      {frames.length > 0 ? (
+        <div ref={scrollerRef} className="flex gap-3 overflow-x-auto p-4">
+          {frames.map((frame, i) => (
             <div key={frame.id} className="w-40 shrink-0 border border-outline-variant bg-surface-container-lowest">
-              <div
-                className="h-28 border-b border-outline-variant relative overflow-hidden"
-                role="img"
-                aria-label={`Proctor frame at ${frame.at}`}
+              <button
+                type="button"
+                onClick={() => setZoomFrame(frame)}
+                className="block h-28 w-full border-b border-outline-variant relative overflow-hidden cursor-zoom-in"
+                aria-label={`Enlarge proctor frame at ${frame.at}`}
                 style={{
                   background:
                     `linear-gradient(135deg, rgba(46,91,255,${0.10 + (i % 4) * 0.04}), transparent 48%), ` +
@@ -338,26 +686,58 @@ function ProctorRoll({ interview }: { interview: InterviewReviewData }) {
                   </>
                 )}
                 <div className="absolute inset-x-0 bottom-0 h-px bg-primary-container/50" />
-              </div>
+              </button>
               <div className="p-2">
                 <p className="label-mono text-on-surface">{frame.at}</p>
-                <p
-                  className={cn(
-                    'mt-1 label-mono',
-                    frame.signal === 'Clear' ? 'text-[var(--emerald-chip-text)]' : 'text-[var(--amber-chip-text)]',
-                  )}
-                >
-                  {frame.signal}
-                </p>
+                <p className={cn('mt-1 label-mono', signalClass(frame.signal))}>{frame.signal}</p>
+                {frame.note && (
+                  <p className="mt-1 text-xs text-on-surface-variant truncate" title={frame.note}>
+                    {frame.note}
+                  </p>
+                )}
               </div>
             </div>
           ))}
+          {(hasNextPage || isFetchingNextPage) && (
+            <div className="w-40 h-28 shrink-0 self-start border border-outline-variant bg-surface-container-lowest flex items-center justify-center">
+              <span className="label-mono text-on-surface-variant animate-pulse">Loading…</span>
+            </div>
+          )}
+          <div ref={sentinelRef} className="w-px shrink-0 self-stretch" aria-hidden />
         </div>
       ) : (
         <div className="p-8 text-center label-mono text-on-surface-variant">
-          No proctor frames available for this interview.
+          {isLoading ? 'Loading proctor frames…' : 'No proctor frames available for this interview.'}
         </div>
       )}
+
+      <Modal
+        open={zoomFrame !== null}
+        onClose={() => setZoomFrame(null)}
+        title={zoomFrame ? `Proctor frame — ${zoomFrame.at}` : undefined}
+        size="lg"
+      >
+        {zoomFrame && (
+          <div className="space-y-3">
+            {zoomFrame.imageUrl ? (
+              <img
+                src={zoomFrame.imageUrl}
+                alt={`Proctor frame at ${zoomFrame.at}`}
+                className="w-full max-h-[60vh] object-contain border border-outline-variant bg-surface-container-lowest"
+              />
+            ) : (
+              <div className="p-8 text-center label-mono text-on-surface-variant border border-outline-variant">
+                Image unavailable
+              </div>
+            )}
+            <div className="flex items-center justify-between gap-3">
+              <p className={cn('label-mono', signalClass(zoomFrame.signal))}>{zoomFrame.signal}</p>
+              <p className="label-mono text-on-surface-variant">{zoomFrame.at}</p>
+            </div>
+            {zoomFrame.note && <p className="text-sm text-on-surface-variant">{zoomFrame.note}</p>}
+          </div>
+        )}
+      </Modal>
     </section>
   );
 }
@@ -399,7 +779,6 @@ export default function InterviewReview() {
   const reviewMutation = useReviewDecision(interviewId);
   const { toast } = useToast();
   const transcriptRefs = useRef<Record<string, HTMLDivElement | null>>({});
-  const [activeTranscriptId, setActiveTranscriptId] = useState('');
   const [currentSeconds, setCurrentSeconds] = useState(0);
   const [localDecision, setLocalDecision] = useState<ReviewDecision | null>(null);
   const decision = localDecision ?? interview?.reviewDecision ?? null;
@@ -408,6 +787,15 @@ export default function InterviewReview() {
     if (!interview) return null;
     return interview.recommendation;
   }, [interview]);
+
+  // Active row = the last turn that started at or before the playhead, so the
+  // highlight follows playback and any seek (waveform, skip, transcript click).
+  const activeTranscriptId = useMemo(() => {
+    const transcript = interview?.transcript;
+    if (!transcript?.length) return '';
+    const active = transcript.filter(t => t.seconds <= currentSeconds).at(-1) ?? transcript[0];
+    return active.id;
+  }, [interview?.transcript, currentSeconds]);
 
   if (!interview) {
     return (
@@ -453,21 +841,14 @@ export default function InterviewReview() {
     );
   };
 
+  // Both jumps just move the playhead — the audio element follows via drift
+  // correction and the active row is derived from currentSeconds.
   const jumpToTranscript = (turn: TranscriptTurn) => {
     setCurrentSeconds(turn.seconds);
-    setActiveTranscriptId(turn.id);
-    transcriptRefs.current[turn.id]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   };
 
   const jumpToTimeline = (seconds: number) => {
-    const turn = interview.transcript.reduce((best, candidate) => {
-      const bestDistance = Math.abs(best.seconds - seconds);
-      const candidateDistance = Math.abs(candidate.seconds - seconds);
-      return candidateDistance < bestDistance ? candidate : best;
-    }, interview.transcript[0]);
-
     setCurrentSeconds(seconds);
-    setActiveTranscriptId(turn.id);
   };
 
   return (
@@ -480,29 +861,39 @@ export default function InterviewReview() {
               Interviews
             </Link>
             <h1 className="font-display text-headline-lg text-on-surface tracking-tight mt-2">{interview.candidateName}</h1>
+            {interview.candidateEmail && (
+              <div className="mt-1 flex items-center gap-2">
+                <p className="text-on-surface-variant break-all">{interview.candidateEmail}</p>
+                <CopyButton
+                  text={interview.candidateEmail}
+                  label={`Copy ${interview.candidateEmail}`}
+                />
+              </div>
+            )}
             <p className="label-mono text-on-surface-variant mt-1">
               {interview.code.toUpperCase()} / {interview.requisitionId} / {interview.requisitionTitle}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {(['Shortlist', 'Hold', 'Reject'] as const).map(action => (
-              <button
-                key={action}
-                type="button"
-                onClick={() => markDecision(action)}
-                disabled={reviewMutation.isPending}
-                className={cn(
-                  'h-10 px-4 border label-mono transition-colors duration-150 flex items-center gap-2',
-                  decision === action
-                    ? 'border-primary-container bg-primary-container text-on-primary-container'
-                    : 'border-outline-variant text-on-surface-variant hover:border-primary-container hover:text-primary-fixed-dim',
-                  reviewMutation.isPending && 'opacity-60 cursor-wait',
-                )}
-              >
-                {action === 'Reject' ? <XCircle size={16} /> : <CheckCircle2 size={16} />}
-                {action}
-              </button>
-            ))}
+            {(['Shortlist', 'Hold', 'Reject'] as const).map(action => {
+              const color = DECISION_BUTTON_CLASS[action];
+              return (
+                <button
+                  key={action}
+                  type="button"
+                  onClick={() => markDecision(action)}
+                  disabled={reviewMutation.isPending}
+                  className={cn(
+                    'h-10 px-4 border label-mono transition-colors duration-150 flex items-center gap-2',
+                    decision === action ? color.active : color.idle,
+                    reviewMutation.isPending && 'opacity-60 cursor-wait',
+                  )}
+                >
+                  {action === 'Reject' ? <XCircle size={16} /> : <CheckCircle2 size={16} />}
+                  {action}
+                </button>
+              );
+            })}
           </div>
         </div>
       </header>
@@ -540,7 +931,12 @@ export default function InterviewReview() {
             />
           </div>
           <div className="grid grid-cols-2 lg:grid-cols-1 gap-px bg-outline-variant">
-            <EvidenceMetric label="Candidate" value={interview.candidateName} />
+            <EvidenceMetric
+              label="Candidate"
+              value={interview.candidateName}
+              sub={interview.candidateEmail}
+              copyableSub
+            />
             <EvidenceMetric label="Domain" value={interview.domain} />
             <EvidenceMetric label="Scoring" value={interview.scoringStatus} />
             <EvidenceMetric label="Taken On" value={dateTimeFormatter.format(new Date(interview.concludedAt))} />

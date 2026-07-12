@@ -4,8 +4,7 @@
 
 // --- Public ---
 export interface ConfigOut {
-  snapshot_min_s: number;
-  snapshot_max_s: number;
+  snapshot_interval_s: number;
   livekit_url: string;
   recaptcha_site_key: string;
 }
@@ -213,6 +212,25 @@ export interface DevUser {
   email: string;
   role: string;
   token: string;
+}
+
+// --- Account & usage (console profile modal) ---
+export interface AccountOut {
+  name: string;
+  email: string;
+  role: string;
+  org_name: string;
+  avatar_url: string | null;
+  plan: string;
+}
+
+export interface UsageOut {
+  plan: string;
+  requisitions_used: number;
+  requisitions_limit: number;
+  interviews_used: number;
+  interviews_limit: number;
+  interviews_hold_at: number;
 }
 
 // --- API Error ---

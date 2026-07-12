@@ -7,6 +7,7 @@ from arq.connections import RedisSettings
 
 from app.core.config import settings
 from app.jobs.annotate import annotate_turn
+from app.jobs.enrichment import enrich_sources
 from app.jobs.interviews import (
     aggregate_scores,
     build_report,
@@ -17,6 +18,8 @@ from app.jobs.interviews import (
     run_scoring,
 )
 from app.jobs.planning import generate_plan
+from app.jobs.proctor_vision import analyze_snapshots, review_integrity
+from app.jobs.recording import process_recording
 from app.jobs.resume import parse_resume
 from app.jobs.sweepers import retention_sweeper, sweep_abandoned, sweep_links_and_apps
 
@@ -24,10 +27,13 @@ from app.jobs.sweepers import retention_sweeper, sweep_abandoned, sweep_links_an
 class WorkerSettings:
     redis_settings = RedisSettings.from_dsn(settings.redis_url)
     max_jobs = 50
-    job_timeout = 600
+    # analyze_snapshots at the 180-frame ceiling is ~30 vision calls with a
+    # retry each — comfortably under 900s, not always under 600s.
+    job_timeout = 900
 
     functions = [
         parse_resume,
+        enrich_sources,
         generate_plan,
         annotate_turn,
         finalize_interview,
@@ -36,6 +42,9 @@ class WorkerSettings:
         build_report,
         identity_check,
         refresh_summary,
+        process_recording,
+        analyze_snapshots,
+        review_integrity,
     ]
 
     cron_jobs = [
