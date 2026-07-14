@@ -41,6 +41,9 @@ class ApplicationOut(BaseModel):
     template_schema: dict | None = None
     answers: dict | None = None
     resume_parse_status: str | None = None
+    # Per-requisition proctoring toggle — the lobby skips the camera/selfie
+    # step (and its permission prompt) when False.
+    proctoring_enabled: bool = True
 
 
 class FormPatchIn(BaseModel):
@@ -65,10 +68,19 @@ class RecordingCompleteIn(BaseModel):
     mime: str = "audio/webm"
 
 
+class ProctoringJoinOut(BaseModel):
+    """Requisition-resolved proctoring settings the interview page acts on:
+    no snapshot loop (and no camera prompt) unless enabled."""
+
+    enabled: bool
+    snapshot_interval_s: int
+
+
 class JoinOut(BaseModel):
     livekit_url: str
     token: str
     room_name: str
+    proctoring: ProctoringJoinOut
 
 
 # --- admin: form templates -------------------------------------------------

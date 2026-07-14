@@ -18,7 +18,15 @@ const CONSENT_VERSION = 'v1-2026-07';
 
 // ─── Step 1: Consent ─────────────────────────────────────────────────────────
 
-function ConsentStep({ applicationId, onDone }: { applicationId: string; onDone: () => void }) {
+function ConsentStep({
+  applicationId,
+  proctoringEnabled,
+  onDone,
+}: {
+  applicationId: string;
+  proctoringEnabled: boolean;
+  onDone: () => void;
+}) {
   const [recordingAck, setRecordingAck] = useState(false);
   const [monitoringAck, setMonitoringAck] = useState(false);
 
@@ -32,7 +40,7 @@ function ConsentStep({ applicationId, onDone }: { applicationId: string; onDone:
     onSuccess: onDone,
   });
 
-  const canProceed = recordingAck && monitoringAck;
+  const canProceed = recordingAck && (monitoringAck || !proctoringEnabled);
 
   return (
     <div className="space-y-6">
@@ -56,12 +64,16 @@ function ConsentStep({ applicationId, onDone }: { applicationId: string; onDone:
           your audio and may be reviewed by the hiring team and our AI systems. You have the
           right to withdraw at any time before starting the interview.
         </p>
-        <p><strong style={{ color: 'var(--text-primary)' }}>Monitoring Disclosure</strong></p>
-        <p>
-          During the interview, our system may take periodic screenshots to verify your identity
-          and ensure interview integrity. This data is stored securely and used only for
-          evaluation and compliance purposes.
-        </p>
+        {proctoringEnabled && (
+          <>
+            <p><strong style={{ color: 'var(--text-primary)' }}>Monitoring Disclosure</strong></p>
+            <p>
+              During the interview, our system may take periodic screenshots to verify your identity
+              and ensure interview integrity. This data is stored securely and used only for
+              evaluation and compliance purposes.
+            </p>
+          </>
+        )}
         <p><strong style={{ color: 'var(--text-primary)' }}>Data Usage</strong></p>
         <p>
           Your interview data (transcript, recording, screenshots) will be retained for up to
@@ -78,11 +90,13 @@ function ConsentStep({ applicationId, onDone }: { applicationId: string; onDone:
           onChange={setRecordingAck}
           label="I consent to this interview being recorded and reviewed by AI systems and the hiring team."
         />
-        <CheckItem
-          checked={monitoringAck}
-          onChange={setMonitoringAck}
-          label="I understand that periodic screenshots may be taken for identity verification."
-        />
+        {proctoringEnabled && (
+          <CheckItem
+            checked={monitoringAck}
+            onChange={setMonitoringAck}
+            label="I understand that periodic screenshots may be taken for identity verification."
+          />
+        )}
       </div>
 
       <Button
@@ -430,8 +444,6 @@ function ReadyStep({
 
 // ─── Main lobby page ──────────────────────────────────────────────────────────
 
-const STEPS = ['Consent', 'Camera', 'Ready'];
-
 export default function CandidateLobby() {
   const { applicationId } = useParams<{ applicationId: string }>();
   const navigate = useNavigate();
@@ -443,14 +455,20 @@ export default function CandidateLobby() {
     enabled: !!applicationId,
   });
 
-  // If already in_lobby or beyond, skip consent
+  // The camera/selfie step exists only when the requisition has proctoring on
+  // (mirrors preflight_join: no verification photo required when it's off).
+  const proctoringEnabled = app?.proctoring_enabled !== false;
+  const steps = proctoringEnabled ? ['Consent', 'Camera', 'Ready'] : ['Consent', 'Ready'];
+  const readyStep = steps.length - 1;
+
+  // If already in_lobby or beyond, skip straight to ready
   const appState = app?.state;
   useEffect(() => {
     if (!appState) return;
     if (appState === 'in_lobby' || appState === 'in_interview') {
-      setStep(2); // skip to ready
+      setStep(readyStep);
     }
-  }, [appState]);
+  }, [appState, readyStep]);
 
   if (isLoading) {
     return (
@@ -463,22 +481,23 @@ export default function CandidateLobby() {
   return (
     <LobbyLayout>
       <div className="mb-8">
-        <Stepper steps={STEPS} current={step} />
+        <Stepper steps={steps} current={step} />
       </div>
 
       {step === 0 && (
         <ConsentStep
           applicationId={applicationId!}
+          proctoringEnabled={proctoringEnabled}
           onDone={() => setStep(1)}
         />
       )}
-      {step === 1 && (
+      {proctoringEnabled && step === 1 && (
         <CameraStep
           applicationId={applicationId!}
           onDone={() => setStep(2)}
         />
       )}
-      {step === 2 && (
+      {step === readyStep && (
         <ReadyStep
           applicationId={applicationId!}
           onJoinSuccess={join => {

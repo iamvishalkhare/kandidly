@@ -1,0 +1,152 @@
+# Kandidly production stack — single EC2 box, Docker Compose (rootful)
+# (docs/deploy-ec2.md). Deliberately a STANDALONE file, not a merge overlay on
+# compose.yml: compose merging unions volume lists, so an overlay could never
+# remove the dev source bind-mounts. Differences from dev:
+#   - no source bind-mounts, no dev servers, no dev-only services (redis-ui)
+#   - no published ports except Caddy 80/443 (Postgres/Redis/MinIO are
+#     compose-network-internal only)
+#   - web is a static Vite bundle baked into the Caddy image
+#     (web/Dockerfile.prod), which also terminates TLS and fronts backend+minio
+#   - restart: unless-stopped everywhere (minio-init is a one-shot)
+#   - all config comes from infra/.env.prod (chmod 600, never committed);
+#     env_file passes the whole file to every service — acceptable on a
+#     single-box deploy, and it sidesteps compose $-interpolation mangling
+#     bcrypt hashes and passwords
+# Deploy contract: infra/deploy.sh (build → migrate → up → health check).
+name: kandidly
+
+services:
+  postgres:
+    image: docker.io/library/postgres:16
+    restart: unless-stopped
+    env_file: .env.prod
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: docker.io/library/redis:7
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-04-08T15-41-24Z
+    restart: unless-stopped
+    # No console in prod (MINIO_BROWSER=off in .env.prod); reachable only via
+    # the compose network and Caddy's files.$DOMAIN presigned-URL proxy.
+    command: ["server", "/data"]
+    env_file: .env.prod
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # One-shot: create the private buckets (SPEC §6.3) then exit.
+  minio-init:
+    image: quay.io/minio/mc:RELEASE.2025-04-08T15-39-49Z
+    restart: "no"
+    env_file: .env.prod
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}" &&
+        for b in kandidly-resumes kandidly-snapshots kandidly-selfies kandidly-recordings kandidly-reports kandidly-backups; do
+          mc mb -p "local/$$b" || true;
+        done
+
+  backend:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    # Image CMD: uvicorn app.main:app on :8000, no --reload.
+    env_file: .env.prod
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    command: ["uv", "run", "--package", "kandidly-backend", "arq", "app.jobs.worker.WorkerSettings"]
+    env_file: .env.prod
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+  agent:
+    build:
+      context: ..
+      dockerfile: agent/Dockerfile
+    restart: unless-stopped
+    # Image CMD: python worker.py start (LiveKit Cloud rooms + inference).
+    env_file: .env.prod
+    depends_on:
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_started
+
+  caddy:
+    build:
+      context: ../web
+      dockerfile: Dockerfile.prod
+      args:
+        # Baked into the SPA bundle at build time; deploy.sh sources .env.prod
+        # so this interpolates (and refuses to run when it's unset).
+        VITE_API_BASE: ${VITE_API_BASE}
+    restart: unless-stopped
+    env_file: .env.prod
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile.prod:/etc/caddy/Caddyfile:ro,z
+      - caddydata:/data
+      - caddyconfig:/config
+    depends_on:
+      backend:
+        condition: service_started
+      minio:
+        condition: service_started
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:
+  caddydata:
+  caddyconfig:

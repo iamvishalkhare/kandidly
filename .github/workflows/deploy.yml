@@ -1,0 +1,97 @@
+# Prod deploy: every push to main runs infra/deploy.sh on the EC2 box via AWS
+# SSM (no inbound SSH needed; auth is GitHub OIDC → IAM role). The script is
+# the contract — pull → build → migrate → up → health check — and it never
+# seeds: Postgres/MinIO state lives in named volumes and persists across
+# deploys. One-time AWS/GitHub setup: docs/deploy-ec2.md §10.
+name: deploy
+
+on:
+  push:
+    branches: [main]
+
+# Queue deploys, never run two at once (deploy.sh is idempotent but not
+# concurrent-safe: two docker compose builds would race).
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+permissions:
+  id-token: write # OIDC token for configure-aws-credentials
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Backend tests
+        working-directory: backend
+        run: uv run --package kandidly-backend pytest -q
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Web build
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 45
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Run deploy.sh on the instance via SSM
+        env:
+          INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
+        run: |
+          set -euo pipefail
+
+          # SSM runs as root; deploy.sh runs as ec2-user instead so the repo
+          # checkout stays owned by ec2-user (root git-pulling into it would
+          # leave root-owned files behind). runuser -l starts a fresh login
+          # session, so ec2-user's docker group membership (runbook §2) is
+          # already active — no extra env needed, unlike rootless podman.
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name AWS-RunShellScript \
+            --comment "kandidly deploy ${GITHUB_SHA::7}" \
+            --timeout-seconds 2700 \
+            --parameters "commands=[\"runuser -l ec2-user -c '/opt/kandidly/infra/deploy.sh'\"]" \
+            --query Command.CommandId --output text)
+          echo "SSM command: $COMMAND_ID"
+
+          while true; do
+            STATUS=$(aws ssm get-command-invocation \
+              --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" \
+              --query Status --output text)
+            case "$STATUS" in
+              Success) break ;;
+              Pending|InProgress|Delayed) sleep 15 ;;
+              *)
+                echo "deploy failed with SSM status: $STATUS"
+                aws ssm get-command-invocation \
+                  --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" \
+                  --query StandardOutputContent --output text
+                aws ssm get-command-invocation \
+                  --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" \
+                  --query StandardErrorContent --output text >&2
+                exit 1
+                ;;
+            esac
+          done
+
+          # Note: SSM truncates captured output at 24 000 chars — enough for
+          # deploy.sh; full logs stay on the box (docker compose logs).
+          aws ssm get-command-invocation \
+            --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" \
+            --query StandardOutputContent --output text

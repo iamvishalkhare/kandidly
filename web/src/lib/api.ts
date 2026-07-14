@@ -31,6 +31,9 @@ const API_BASE = (import.meta as { env: Record<string, string> }).env.VITE_API_B
 export const api = axios.create({
   baseURL: API_BASE,
   headers: { 'Content-Type': 'application/json' },
+  // Sends the console gate cookie (set by Caddy basicauth in prod — see
+  // infra/Caddyfile.prod) on the cross-origin app→api requests. No-op in dev.
+  withCredentials: true,
 });
 
 // Attach token on every request

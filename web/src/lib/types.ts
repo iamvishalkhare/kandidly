@@ -31,6 +31,9 @@ export interface ApplicationOut {
   template_schema: FormSchema | null;
   answers: Record<string, unknown> | null;
   resume_parse_status: string | null;
+  // Per-requisition proctoring toggle — the lobby skips the camera/selfie
+  // step (and its permission prompt) when false.
+  proctoring_enabled?: boolean;
 }
 
 export interface FormSchema {
@@ -75,6 +78,12 @@ export interface JoinOut {
   livekit_url: string;
   token: string;
   room_name: string;
+  // Requisition-resolved proctoring settings; the interview page starts the
+  // snapshot loop (and asks for camera) only when enabled.
+  proctoring?: {
+    enabled: boolean;
+    snapshot_interval_s: number;
+  };
 }
 
 // --- Admin: Form Templates ---

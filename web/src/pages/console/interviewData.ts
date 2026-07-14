@@ -49,6 +49,8 @@ export type IntegrityBand = '90-100' | '60-89' | '40-59' | 'under-40';
 
 export interface IntegritySummary {
   verdict: IntegrityVerdict;
+  /** False when the requisition ran with proctoring off — no camera data expected. */
+  proctoringEnabled: boolean;
   frameCount: number;
   analyzedCount: number;
   signalCounts: Record<string, number>;

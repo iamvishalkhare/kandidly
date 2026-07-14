@@ -580,6 +580,14 @@ function integrityChip(
   analyzing: boolean,
 ): { label: string; className: string } | null {
   if (!integrity) return null;
+  // Proctoring was off for this requisition: no camera data was ever expected,
+  // so a clear/flagged verdict would be misleading either way.
+  if (integrity.proctoringEnabled === false) {
+    return {
+      label: 'Proctoring off',
+      className: 'border-outline-variant text-on-surface-variant',
+    };
+  }
   if (integrity.score != null && integrity.band) {
     return {
       label: `Integrity ${integrity.score}/100`,
@@ -646,11 +654,13 @@ function ProctorRoll({ interview }: { interview: InterviewReviewData }) {
               {chip.label}
             </span>
           )}
-          <span className="label-mono text-on-surface-variant">
-            {integrity && integrity.frameCount > 0
-              ? `${integrity.analyzedCount}/${integrity.frameCount} analyzed`
-              : `${frameCount} frames`}
-          </span>
+          {integrity?.proctoringEnabled !== false && (
+            <span className="label-mono text-on-surface-variant">
+              {integrity && integrity.frameCount > 0
+                ? `${integrity.analyzedCount}/${integrity.frameCount} analyzed`
+                : `${frameCount} frames`}
+            </span>
+          )}
         </div>
       </div>
       {integrity?.summary && (
@@ -707,7 +717,11 @@ function ProctorRoll({ interview }: { interview: InterviewReviewData }) {
         </div>
       ) : (
         <div className="p-8 text-center label-mono text-on-surface-variant">
-          {isLoading ? 'Loading proctor frames…' : 'No proctor frames available for this interview.'}
+          {integrity?.proctoringEnabled === false
+            ? 'Proctoring was disabled for this requisition — no camera data was collected.'
+            : isLoading
+              ? 'Loading proctor frames…'
+              : 'No proctor frames available for this interview.'}
         </div>
       )}
 

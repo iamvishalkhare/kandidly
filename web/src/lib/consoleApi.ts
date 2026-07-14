@@ -120,6 +120,7 @@ export interface ConsoleReviewWire extends ConsoleInterviewWire {
   rubric: { key: string; label: string; weight: number; score: number; summary: string; reasoning: string }[];
   integrity: {
     verdict: IntegrityVerdict;
+    proctoring_enabled: boolean;
     frame_count: number;
     analyzed_count: number;
     signal_counts: Record<string, number>;
@@ -302,6 +303,7 @@ export function toReview(wire: ConsoleReviewWire): ReviewData {
   const integrity: IntegritySummary | null = wire.integrity
     ? {
         verdict: wire.integrity.verdict,
+        proctoringEnabled: wire.integrity.proctoring_enabled,
         frameCount: wire.integrity.frame_count,
         analyzedCount: wire.integrity.analyzed_count,
         signalCounts: wire.integrity.signal_counts,

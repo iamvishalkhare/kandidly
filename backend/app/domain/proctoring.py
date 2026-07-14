@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError
 from app.db.models import Consent, ProctoringEvent, ProctoringSnapshot
+from app.schemas.interview_config import InterviewConfig, ProctoringConfig
 
 # Closed set of browser event types (SPEC §10.2).
 BROWSER_EVENT_TYPES: frozenset[str] = frozenset(
@@ -61,6 +62,12 @@ _BASE_SEVERITY: dict[str, str] = {
     "mic_off": "medium",
     "page_unload": "info",
 }
+
+
+def config_for(interview_config: dict | None) -> ProctoringConfig:
+    """Resolved proctoring settings from requisitions.interview_config (JSONB).
+    The single gate for every candidate-facing camera/proctoring decision."""
+    return InterviewConfig(**(interview_config or {})).proctoring
 
 
 def classify(event_type: str, payload: dict) -> str:

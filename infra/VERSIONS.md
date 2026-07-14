@@ -9,8 +9,10 @@ against official docs before relying on API surface (SPEC §0.2, §3).
 
 | Tool            | Version used | Notes |
 |-----------------|--------------|-------|
-| Podman          | 5.8.2        | rootless (SPEC D17, §3.5) |
-| compose provider| —            | `podman compose` delegates; record provider + version here |
+| Podman          | 5.8.2        | rootless, **dev only** (SPEC D17, §3.5) |
+| Docker          | 25.0.16      | prod box container runtime (infra/deploy.sh, docs/deploy-ec2.md) — AL2023 dropped podman/buildah/skopeo from its default repo mid-2026, so prod moved off podman while dev keeps it |
+| compose provider| —            | dev: `podman compose` delegates. Prod: `docker compose` (plugin) directly (infra/deploy.sh) |
+| Caddy           | 2.10         | prod edge: TLS, subdomain routing, console gate (infra/Caddyfile.prod; base of web/Dockerfile.prod) |
 | Python          | 3.12         | container base (host may differ) |
 | Node            | 26.x         | web build |
 | uv              | 0.11+        | Python package manager (SPEC D18) |

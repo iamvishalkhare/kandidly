@@ -22,7 +22,7 @@ import {
   type RemoteParticipant,
 } from 'livekit-client';
 import { Mic, MicOff, PhoneOff, Volume2, WifiOff, AlertTriangle, CameraOff, X } from 'lucide-react';
-import { candidateApi, publicApi } from '../../lib/api';
+import { candidateApi } from '../../lib/api';
 import { Button, Spinner } from '../../components/ui';
 import { cn } from '../../lib/utils';
 import type { JoinOut } from '../../lib/types';
@@ -224,11 +224,11 @@ export default function CandidateInterview() {
           } catch {
             /* recording is best-effort */
           }
-          if (!snapshotsRef.current) {
-            const cfg = await publicApi.getConfig().catch(() => null);
-            if (cancelled) return;
+          // Snapshot proctoring is per-requisition; when disabled, never ask
+          // for the camera. Missing field (stale router state) means enabled.
+          if (!snapshotsRef.current && joinData.proctoring?.enabled !== false) {
             snapshotsRef.current = startSnapshotLoop(interviewId, {
-              intervalS: cfg?.snapshot_interval_s ?? 10,
+              intervalS: joinData.proctoring?.snapshot_interval_s ?? 10,
               onCameraDenied: () => setCameraBanner(true),
             });
           }

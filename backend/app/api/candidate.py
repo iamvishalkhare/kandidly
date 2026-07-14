@@ -43,6 +43,7 @@ from app.schemas.api import (
     FormPatchIn,
     FormSubmitOut,
     JoinOut,
+    ProctoringJoinOut,
     RecordingCompleteIn,
 )
 
@@ -101,11 +102,14 @@ async def get_application(
     user: AuthUser = Depends(require_candidate),
     db: AsyncSession = Depends(get_db),
 ) -> ApplicationOut:
+    from app.domain import proctoring
+
     app = await apps.get_owned(db, application_id, user.user_id)
     submission = (
         await db.execute(select(FormSubmission).where(FormSubmission.application_id == app.id))
     ).scalar_one_or_none()
     template = await db.get(FormTemplate, submission.template_id) if submission else None
+    requisition = await db.get(Requisition, app.requisition_id)
     return ApplicationOut(
         id=app.id,
         requisition_id=app.requisition_id,
@@ -115,6 +119,9 @@ async def get_application(
         template_schema=template.schema if template else None,
         answers=submission.answers if submission else None,
         resume_parse_status=submission.resume_parse_status if submission else None,
+        proctoring_enabled=proctoring.config_for(
+            requisition.interview_config if requisition else None
+        ).enabled,
     )
 
 
@@ -309,6 +316,7 @@ async def post_selfie(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     app = await apps.get_owned(db, application_id, user.user_id)
+    await _require_proctoring_enabled(db, app.requisition_id)
     data = await image.read()
     file_id = new_id()
     key = storage.selfie_key(app.id)
@@ -337,6 +345,17 @@ async def _owned_interview(db: AsyncSession, interview_id: UUID, user: AuthUser)
     return interview, app
 
 
+async def _require_proctoring_enabled(db: AsyncSession, requisition_id: UUID) -> None:
+    """Reject proctoring data (snapshots/events/selfies) when the requisition's
+    proctoring toggle is off — the client shouldn't send any, but enforce it."""
+    from app.domain import proctoring
+
+    requisition = await db.get(Requisition, requisition_id)
+    cfg = proctoring.config_for(requisition.interview_config if requisition else None)
+    if not cfg.enabled:
+        raise AppError("forbidden", "Proctoring is disabled for this interview")
+
+
 @router.post("/interviews/{interview_id}/snapshots", dependencies=[rate_limit("snapshots", 30)])
 async def upload_snapshot(
     interview_id: UUID,
@@ -358,6 +377,7 @@ async def upload_snapshot(
     interview, app = await _owned_interview(db, interview_id, user)
     if interview.status not in ("live", "paused", "wrap_up"):
         raise AppError("conflict", "Interview is not accepting snapshots")
+    await _require_proctoring_enabled(db, app.requisition_id)
     await proctoring.require_consent(db, app.id)
 
     data = await image.read()
@@ -405,6 +425,7 @@ async def post_proctor_events(
     from app.domain import proctoring
 
     interview, app = await _owned_interview(db, interview_id, user)
+    await _require_proctoring_enabled(db, app.requisition_id)
     await proctoring.require_consent(db, app.id)
     accepted = await proctoring.ingest_events(
         db,
@@ -513,6 +534,7 @@ async def join(
 ):
     from fastapi.responses import JSONResponse
 
+    from app.domain import proctoring
     from app.domain.interviews import mint_candidate_token, preflight_join
 
     app = await apps.get_owned(db, application_id, user.user_id)
@@ -522,5 +544,14 @@ async def join(
         return JSONResponse(status_code=202, content=reason)
 
     interview = await db.get(Interview, app.interview_id)
+    requisition = await db.get(Requisition, app.requisition_id)
+    cfg = proctoring.config_for(requisition.interview_config if requisition else None)
     token = mint_candidate_token(interview.room_name, app.id)  # type: ignore
-    return JoinOut(livekit_url=settings.livekit_url, token=token, room_name=interview.room_name)  # type: ignore
+    return JoinOut(
+        livekit_url=settings.livekit_url,
+        token=token,
+        room_name=interview.room_name,  # type: ignore
+        proctoring=ProctoringJoinOut(
+            enabled=cfg.enabled, snapshot_interval_s=cfg.snapshot_interval_s
+        ),
+    )

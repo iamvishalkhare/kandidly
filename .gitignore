@@ -20,6 +20,7 @@ web/dist/
 .env
 .env.*
 !.env.example
+!.env.prod.example
 infra/.env
 !infra/.env.example
 

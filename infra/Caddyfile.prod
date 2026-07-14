@@ -1,0 +1,82 @@
+# Kandidly prod edge. One Caddy fronts everything (docs/deploy-ec2.md):
+#   $DOMAIN       → SPA bundle baked into this image at /srv (web/Dockerfile.prod)
+#   api.$DOMAIN   → backend:8000
+#   files.$DOMAIN → minio:9000 (presigned URLs)
+# $DOMAIN may itself be a subdomain (e.g. kandidly.vishalkhare.com — the app
+# lives there, with api./files. nested one level deeper).
+# {$VAR} placeholders resolve from the container environment (infra/.env.prod).
+#
+# ── TEMPORARY console gate — remove when WorkOS auth lands ────────────────────
+# App auth is still the dev-token scheme (unsigned base64 JSON — forgeable), so
+# the console must not be reachable anonymously. The app itself uses
+# `Authorization: Bearer`, which rules out plain basic_auth on the API paths
+# (one Authorization header per request). Instead:
+#   1. basic_auth guards the console SPA routes; passing it sets a domain-wide
+#      HttpOnly gate cookie (browser prompts once per session).
+#   2. api.$DOMAIN requires that cookie on /api/admin/* (Basic also accepted
+#      there for curl/CI, which don't carry a Bearer token).
+#   3. /api/public/dev-users only reveals staff tokens when Caddy asserts
+#      X-Console-Gate after validating the cookie; inbound copies of the
+#      header are always stripped, so only this proxy can assert it.
+# Candidate surfaces (/i/*, /apply/*, /api/candidate/*, /api/public/*) stay
+# open. `route` blocks are deliberate: they run directives in written order,
+# so the 401 short-circuits BEFORE the Set-Cookie header is attached, and the
+# path matchers see the original URL (not the try_files rewrite).
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	route {
+		root * /srv
+
+		basic_auth /console* {
+			{$CONSOLE_GATE_USER} {$CONSOLE_GATE_HASH}
+		}
+		# Domain=$DOMAIN makes the cookie cover api.$DOMAIN too.
+		header /console* Set-Cookie "kandidly_gate={$CONSOLE_GATE_COOKIE}; Domain={$DOMAIN}; Path=/; Max-Age=43200; Secure; HttpOnly; SameSite=Lax"
+
+		# SPA fallback: client-routed paths resolve to index.html.
+		try_files {path} /index.html
+		file_server
+	}
+}
+
+api.{$DOMAIN} {
+	encode zstd gzip
+
+	route {
+		# Service-to-service and ops surfaces are never internet-facing.
+		@blocked path /internal/* /metrics /metrics/* /docs /redoc /openapi.json
+		respond @blocked 404
+
+		# Only this proxy may assert the console gate to the backend.
+		request_header -X-Console-Gate
+		@gated header Cookie *kandidly_gate={$CONSOLE_GATE_COOKIE}*
+		request_header @gated X-Console-Gate 1
+
+		# Staff API: gate cookie (browser) or Basic (curl/CI). OPTIONS stays
+		# open — CORS preflights carry no credentials by spec, and FastAPI's
+		# CORS middleware answers them.
+		@staff {
+			path /api/admin/* /api/public/dev-reset
+			not header Cookie *kandidly_gate={$CONSOLE_GATE_COOKIE}*
+			not method OPTIONS
+		}
+		basic_auth @staff {
+			{$CONSOLE_GATE_USER} {$CONSOLE_GATE_HASH}
+		}
+
+		reverse_proxy backend:8000
+	}
+}
+
+files.{$DOMAIN} {
+	# MinIO, for presigned URLs handed to the browser. SigV4 signs the Host
+	# header, so this proxy must preserve it (Caddy's default) and the backend
+	# must presign against this same origin: KANDIDLY_S3_PUBLIC_ENDPOINT and
+	# MINIO_SERVER_URL are both https://files.$DOMAIN in .env.prod.
+	reverse_proxy minio:9000
+}

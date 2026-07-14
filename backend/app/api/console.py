@@ -217,6 +217,9 @@ class IntegrityOut(BaseModel):
     run; the signal-count heuristic is the fallback until then."""
 
     verdict: Literal["clear", "warn", "flagged", "pending"]
+    # False when the requisition's proctoring toggle was off — the review UI
+    # shows "proctoring off" instead of a (vacuously) clean camera record.
+    proctoring_enabled: bool = True
     frame_count: int
     analyzed_count: int
     signal_counts: dict[str, int] = {}
@@ -997,6 +1000,8 @@ async def get_console_review(
     identity = (
         await db.execute(select(IdentityCheck).where(IdentityCheck.interview_id == interview.id))
     ).scalar_one_or_none()
+    from app.domain.proctoring import config_for as proctoring_config_for
+
     review = interview.integrity_review or {}
     integrity = IntegrityOut(
         verdict=integrity_verdict(  # type: ignore[arg-type]
@@ -1006,6 +1011,9 @@ async def get_console_review(
             analyzed_count,
             score=interview.integrity_score,
         ),
+        proctoring_enabled=proctoring_config_for(
+            req.interview_config if req else None
+        ).enabled,
         frame_count=frame_count,
         analyzed_count=analyzed_count,
         signal_counts=signal_counts,
