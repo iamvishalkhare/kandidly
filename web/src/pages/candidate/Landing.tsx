@@ -174,10 +174,15 @@ export default function CandidateLanding() {
     setShowPicker(false);
     // Dev convenience: abandon any prior application for this link+candidate so
     // every pick starts a brand-new interview instead of resuming to "Thank you".
-    try {
-      await publicApi.devReset(token!, user.email);
-    } catch {
-      /* best-effort — proceed even if reset is unavailable */
+    // Dev-only: in prod the edge gates /api/public/dev-reset behind Basic auth
+    // (infra/Caddyfile.prod @staff), so calling it pops a browser sign-in dialog
+    // at the candidate, and the 401 clears the just-picked session (api.ts).
+    if ((import.meta as { env: Record<string, string> }).env.DEV) {
+      try {
+        await publicApi.devReset(token!, user.email);
+      } catch {
+        /* best-effort — proceed even if reset is unavailable */
+      }
     }
     claimMutation.mutate();
   };
