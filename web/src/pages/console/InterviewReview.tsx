@@ -217,6 +217,17 @@ function WaveformRecording({
   const [rate, setRate] = useState(1);
   const queryClient = useQueryClient();
   const audioErrorsRef = useRef(0);
+  // audioSrc is re-presigned on every review refetch (fresh signature each
+  // time), and the evaluation/integrity polls refetch every 4–10s. Binding it
+  // straight to <audio src> resets the element on each poll, so playback
+  // could never survive more than a few seconds. Pin the first URL for this
+  // mount; onError drops the pin so the next refetched URL (fresh signature
+  // after the 10-min presign expiry) takes over.
+  const pinnedAudioSrcRef = useRef<string | null>(null);
+  if (interview.audioSrc && !pinnedAudioSrcRef.current) {
+    pinnedAudioSrcRef.current = interview.audioSrc;
+  }
+  const audioSrc = pinnedAudioSrcRef.current;
   const durationSeconds = Math.max(
     1,
     interview.audioDurationSeconds ?? interview.transcript.at(-1)?.seconds ?? 1,
@@ -405,10 +416,10 @@ function WaveformRecording({
         <span>0:00</span>
         <span>{formatTimeline(durationSeconds)}</span>
       </div>
-      {interview.audioSrc && (
+      {audioSrc && (
         <audio
           ref={audioRef}
-          src={interview.audioSrc}
+          src={audioSrc}
           preload="auto"
           onTimeUpdate={e => {
             if (!e.currentTarget.paused) onSeek(e.currentTarget.currentTime);
@@ -421,10 +432,12 @@ function WaveformRecording({
           onPause={() => setPlaying(false)}
           onError={() => {
             // The presigned URL expires after 10 minutes; refetching the
-            // review mints a fresh one. Cap invalidations so a genuinely
-            // missing file doesn't refetch-loop.
+            // review mints a fresh one, and dropping the pin lets it replace
+            // the dead src. Cap invalidations so a genuinely missing file
+            // doesn't refetch-loop.
             if (audioErrorsRef.current < 2) {
               audioErrorsRef.current += 1;
+              pinnedAudioSrcRef.current = null;
               void queryClient.invalidateQueries({
                 queryKey: ['console', 'interviews', interview.id],
               });
