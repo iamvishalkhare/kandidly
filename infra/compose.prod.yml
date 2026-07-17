@@ -83,6 +83,12 @@ services:
       # Deployed commit, exported by deploy.sh after git pull; /healthz echoes
       # it so the post-deploy check can prove the new code is live.
       KANDIDLY_GIT_SHA: ${GIT_SHA:-}
+      # Derived from the MinIO root creds (deploy.sh sources .env.prod into
+      # the interpolation env) so app and MinIO can never disagree — a
+      # hand-copied KANDIDLY_S3_SECRET_KEY mismatch 500'd every prod upload
+      # (SignatureDoesNotMatch, 2026-07-17). Overrides any env_file value.
+      KANDIDLY_S3_ACCESS_KEY: ${MINIO_ROOT_USER:-}
+      KANDIDLY_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-}
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz"]
       interval: 10s
@@ -103,6 +109,10 @@ services:
     restart: unless-stopped
     command: ["uv", "run", "--package", "kandidly-backend", "arq", "app.jobs.worker.WorkerSettings"]
     env_file: .env.prod
+    environment:
+      # Same S3-cred derivation as backend (see comment there).
+      KANDIDLY_S3_ACCESS_KEY: ${MINIO_ROOT_USER:-}
+      KANDIDLY_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-}
     depends_on:
       postgres:
         condition: service_healthy
