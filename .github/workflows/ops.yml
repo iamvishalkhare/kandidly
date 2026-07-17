@@ -23,6 +23,7 @@ on:
           - logs-minio-init
           - compose-ps
           - rotate-service-token
+          - restart-caddy
       tail:
         description: Log lines to tail
         type: string
@@ -62,6 +63,11 @@ jobs:
           case "$ACTION" in
             logs-*) CMD="$COMPOSE logs --tail $TAIL --timestamps ${ACTION#logs-}" ;;
             compose-ps) CMD="$COMPOSE ps -a" ;;
+            # Full process restart, not `caddy reload`: listener-level options
+            # (e.g. `servers { protocols }`) only apply when the sockets are
+            # rebound, and a config-only change never recreates the container
+            # (bind-mounted Caddyfile, unchanged image/env).
+            restart-caddy) CMD="$COMPOSE restart caddy && sleep 3 && $COMPOSE ps caddy" ;;
             # Generates the token ON the box, rewrites the .env.prod line,
             # recreates the services that read it, then proves auth works by
             # curling /internal from inside the backend container (expect 404
