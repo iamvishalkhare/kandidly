@@ -22,6 +22,7 @@ No report or event writes — the console reads these at request time
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
 import structlog
@@ -98,9 +99,7 @@ async def analyze_snapshots(ctx: dict, interview_id: str) -> None:
     await enqueue("review_integrity", interview_id)
 
 
-async def _analyze_frames(
-    interview_id: str, started_at: datetime | None, rows: list
-) -> int:
+async def _analyze_frames(interview_id: str, started_at: datetime | None, rows: Sequence) -> int:
     from pydantic_ai import BinaryContent  # lazy, like app.llm.clients
 
     agent = proctor_vision()
@@ -113,9 +112,7 @@ async def _analyze_frames(
         images: list = []
         try:
             for i, (snap, key) in enumerate(batch):
-                offset = (
-                    int((snap.captured_at - started_at).total_seconds()) if started_at else 0
-                )
+                offset = int((snap.captured_at - started_at).total_seconds()) if started_at else 0
                 lines.append(f"Frame {i}: captured {offset}s into the interview")
                 data = await storage.get_object(storage.BUCKET_SNAPSHOTS, key)
                 images.append(BinaryContent(data=data, media_type="image/webp"))

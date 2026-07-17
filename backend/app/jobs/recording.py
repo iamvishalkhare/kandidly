@@ -73,7 +73,9 @@ async def _run_ffmpeg(*args: str) -> bytes:
     )
     out, err = await proc.communicate()
     if proc.returncode != 0:
-        raise RuntimeError(f"ffmpeg failed ({proc.returncode}): {err.decode(errors='replace')[:500]}")
+        raise RuntimeError(
+            f"ffmpeg failed ({proc.returncode}): {err.decode(errors='replace')[:500]}"
+        )
     return out
 
 
@@ -108,9 +110,7 @@ async def process_recording(ctx: dict, interview_id: str) -> None:
     manifest: dict = {}
     if manifest_key in keys:
         try:
-            manifest = json.loads(
-                await storage.get_object(storage.BUCKET_RECORDINGS, manifest_key)
-            )
+            manifest = json.loads(await storage.get_object(storage.BUCKET_RECORDINGS, manifest_key))
         except Exception:  # noqa: BLE001
             log.warning("recording_manifest_unreadable", interview_id=interview_id)
     offset = _head_trim_seconds(manifest, started_at)
@@ -125,7 +125,17 @@ async def process_recording(ctx: dict, interview_id: str) -> None:
         # missing duration/cues metadata MediaRecorder streams lack.
         trim = ["-ss", f"{offset:.3f}"] if offset else []
         await _run_ffmpeg(
-            "-y", "-i", str(raw), *trim, "-vn", "-c:a", "libopus", "-b:a", "32k", "-ac", "1",
+            "-y",
+            "-i",
+            str(raw),
+            *trim,
+            "-vn",
+            "-c:a",
+            "libopus",
+            "-b:a",
+            "32k",
+            "-ac",
+            "1",
             str(out),
         )
         pcm = await _run_ffmpeg(

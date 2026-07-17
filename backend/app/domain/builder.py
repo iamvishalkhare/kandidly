@@ -153,7 +153,7 @@ def schema_to_builder_fields(schema: dict) -> list[dict]:
         prop = properties.get(key)
         if not isinstance(prop, dict):
             continue
-        ftype = prop.get("x-builder-type") or _FROM_XFIELD.get(prop.get("x-field"), "text")
+        ftype = prop.get("x-builder-type") or _FROM_XFIELD.get(prop.get("x-field") or "", "text")
         options = prop.get("enum") or (prop.get("items") or {}).get("enum") or []
         fields.append(
             {

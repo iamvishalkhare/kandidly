@@ -43,7 +43,6 @@ from app.db.models import (
     User,
 )
 from app.domain.audit import record_audit
-from app.domain.integrity import integrity_band
 from app.domain.builder import (
     builder_fields_to_schema,
     builder_rubric_to_criteria,
@@ -51,6 +50,7 @@ from app.domain.builder import (
     schema_to_builder_fields,
 )
 from app.domain.forms import validate_template
+from app.domain.integrity import integrity_band
 from app.domain.links import generate_token
 from app.domain.plan import (
     ensure_can_create_requisition,
@@ -374,9 +374,7 @@ def _closes_at_from(end_date: str | None) -> datetime | None:
             dt = dt.replace(tzinfo=UTC)
         return dt
     else:
-        return datetime.fromisoformat(value).replace(
-            hour=23, minute=59, second=59, tzinfo=UTC
-        )
+        return datetime.fromisoformat(value).replace(hour=23, minute=59, second=59, tzinfo=UTC)
 
 
 def _proctoring_config(enabled: bool) -> ProctoringConfig:
@@ -421,7 +419,7 @@ async def _create_template_and_rubric(
     carries (template_family, template_version, rubric_family, rubric_version)
     when versioning an existing requisition's artifacts."""
     schema = builder_fields_to_schema([f.model_dump() for f in body.screening_fields])
-    
+
     # Mirrors the builder's client-side error list: any failure keeps the
     # artifacts (and thus the requisition) in draft; deploys surface the error.
     is_valid = True
@@ -435,7 +433,9 @@ async def _create_template_and_rubric(
         if any(not c.description.strip() for c in body.rubric):
             raise AppError("validation_error", "every rubric criterion needs a description")
         validate_template(schema)
-        test_criteria = builder_rubric_to_criteria([c.model_dump() for c in body.rubric], is_draft=False)
+        test_criteria = builder_rubric_to_criteria(
+            [c.model_dump() for c in body.rubric], is_draft=False
+        )
         validate_criteria(test_criteria)
     except AppError:
         if body.deploy:
@@ -443,7 +443,9 @@ async def _create_template_and_rubric(
         is_valid = False
 
     status = "published" if is_valid else "draft"
-    criteria = builder_rubric_to_criteria([c.model_dump() for c in body.rubric], is_draft=not is_valid)
+    criteria = builder_rubric_to_criteria(
+        [c.model_dump() for c in body.rubric], is_draft=not is_valid
+    )
 
     now = datetime.now(UTC)
     template = FormTemplate(
@@ -631,14 +633,17 @@ async def deploy_requisition(
     """Composite deploy: published template + rubric + requisition + open
     invite link in one transaction (the builder's Deploy / Save-as-Offline)."""
     import asyncio
+
     await asyncio.sleep(3)
     org_id = await _org_id_for(db, user)
     # Free-plan quota: creating a requisition past the cap is refused (402).
     await ensure_can_create_requisition(db, org_id, deploy=body.deploy)
-    template, rubric, artifact_status = await _create_template_and_rubric(db, org_id, user, body, family=None)
+    template, rubric, artifact_status = await _create_template_and_rubric(
+        db, org_id, user, body, family=None
+    )
 
     seq = (await db.execute(sa_text("SELECT nextval('requisition_code_seq')"))).scalar_one()
-    
+
     if body.deploy:
         req_status = "open"
     else:
@@ -704,6 +709,7 @@ async def update_requisition(
     immutable versions: changed screening fields or rubric produce a new
     published version and repoint the requisition."""
     import asyncio
+
     await asyncio.sleep(3)
     req = await _get_live_requisition(db, req_id)
     org_id = await _org_id_for(db, user)
@@ -728,9 +734,8 @@ async def update_requisition(
     rubric_changed = [(c.name, c.description, float(c.weight)) for c in current_criteria] != [
         (c["name"], c["description"], float(c["weight"])) for c in new_criteria
     ]
-    force_new_version = (
-        (current_template is not None and current_template.status == "draft") or
-        (current_rubric is not None and current_rubric.status == "draft")
+    force_new_version = (current_template is not None and current_template.status == "draft") or (
+        current_rubric is not None and current_rubric.status == "draft"
     )
 
     if schema_changed or rubric_changed or force_new_version:
@@ -972,31 +977,25 @@ async def get_console_review(
     # Integrity aggregation over the full snapshot set (the filmstrip itself
     # is served paginated by console_review_snapshots).
     snap_rows = (
-        (
-            await db.execute(
-                select(ProctoringSnapshot.analyzed, ProctoringSnapshot.signal).where(
-                    ProctoringSnapshot.interview_id == interview.id
-                )
+        await db.execute(
+            select(ProctoringSnapshot.analyzed, ProctoringSnapshot.signal).where(
+                ProctoringSnapshot.interview_id == interview.id
             )
         )
-        .all()
-    )
+    ).all()
     frame_count = len(snap_rows)
     analyzed_count = sum(1 for analyzed, _signal in snap_rows if analyzed)
     signal_counts: dict[str, int] = {}
     for _analyzed, signal in snap_rows:
         if signal:
             signal_counts[signal] = signal_counts.get(signal, 0) + 1
-    event_counts = {
-        severity: count
-        for severity, count in (
-            await db.execute(
-                select(ProctoringEvent.severity, func.count())
-                .where(ProctoringEvent.interview_id == interview.id)
-                .group_by(ProctoringEvent.severity)
-            )
-        ).all()
-    }
+    event_counts: dict[str, int] = {}
+    for severity, count in await db.execute(
+        select(ProctoringEvent.severity, func.count())
+        .where(ProctoringEvent.interview_id == interview.id)
+        .group_by(ProctoringEvent.severity)
+    ):
+        event_counts[severity] = count
     identity = (
         await db.execute(select(IdentityCheck).where(IdentityCheck.interview_id == interview.id))
     ).scalar_one_or_none()
@@ -1011,9 +1010,7 @@ async def get_console_review(
             analyzed_count,
             score=interview.integrity_score,
         ),
-        proctoring_enabled=proctoring_config_for(
-            req.interview_config if req else None
-        ).enabled,
+        proctoring_enabled=proctoring_config_for(req.interview_config if req else None).enabled,
         frame_count=frame_count,
         analyzed_count=analyzed_count,
         signal_counts=signal_counts,

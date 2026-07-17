@@ -39,7 +39,6 @@ from app.core.config import settings
 from app.core.ids import new_id
 from app.db import seed_fixtures as fx
 from app.db.base import Base
-from app.domain.integrity import integrity_band
 from app.db.models import (
     Application,
     ApplicationEvent,
@@ -68,6 +67,7 @@ from app.db.models import (
 )
 from app.db.session import SessionLocal
 from app.domain.builder import builder_fields_to_schema, builder_rubric_to_criteria
+from app.domain.integrity import integrity_band
 from app.domain.links import generate_token
 from app.domain.scoring import anchor_to_score100
 from app.schemas.interview_config import InterviewConfig

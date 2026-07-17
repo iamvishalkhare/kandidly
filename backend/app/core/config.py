@@ -18,6 +18,9 @@ class Settings(BaseSettings):
 
     # core
     env: str = "dev"
+    # Deployed commit — injected by deploy.sh via compose (GIT_SHA); surfaced on
+    # /healthz so CI can confirm the box actually serves the new build.
+    git_sha: str = ""
 
     # datastores
     database_url: str = "postgresql+asyncpg://kandidly:kandidly@localhost:5432/kandidly"

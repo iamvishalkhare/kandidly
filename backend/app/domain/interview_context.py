@@ -65,6 +65,7 @@ def _requisition_digest(req: Requisition | None) -> dict:
 def _seed_questions(plan_nodes: list) -> list[str]:
     """Seed questions from plan nodes (accepts ORM nodes or dicts), excluding
     the wrap / candidate-questions housekeeping nodes."""
+
     def _get(n, attr):
         return n.get(attr) if isinstance(n, dict) else getattr(n, attr, None)
 
