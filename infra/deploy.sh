@@ -81,6 +81,15 @@ log "alembic upgrade head"
 log "start full stack"
 "${COMPOSE[@]}" up -d
 
+# Caddyfile.prod is bind-mounted (compose.prod.yml), so a config-only change
+# doesn't alter the caddy service hash and `up -d` won't recreate the
+# container. Graceful reload picks it up; a no-op when unchanged. Retry once:
+# right after first start the admin socket may not be listening yet.
+log "reload caddy config"
+"${COMPOSE[@]}" exec -T caddy caddy reload --config /etc/caddy/Caddyfile \
+  || { sleep 3; "${COMPOSE[@]}" exec -T caddy caddy reload --config /etc/caddy/Caddyfile; } \
+  || fail "caddy config reload failed"
+
 log "prune old images"
 docker image prune -f >/dev/null || true
 
