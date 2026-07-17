@@ -24,10 +24,15 @@ on:
           - compose-ps
           - rotate-service-token
           - restart-caddy
+          - presign-recording
       tail:
         description: Log lines to tail
         type: string
         default: "300"
+      arg:
+        description: Action argument (presign-recording; interview UUID)
+        type: string
+        default: ""
 
 permissions:
   id-token: write # OIDC token for configure-aws-credentials
@@ -55,6 +60,7 @@ jobs:
           INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
           ACTION: ${{ inputs.action }}
           TAIL: ${{ inputs.tail }}
+          ARG: ${{ inputs.arg }}
         run: |
           set -euo pipefail
           [[ "$TAIL" =~ ^[0-9]+$ ]] || { echo "tail must be a number"; exit 1; }
@@ -68,6 +74,13 @@ jobs:
             # rebound, and a config-only change never recreates the container
             # (bind-mounted Caddyfile, unchanged image/env).
             restart-caddy) CMD="$COMPOSE restart caddy && sleep 3 && $COMPOSE ps caddy" ;;
+            # Mints a fresh 10-min presigned URL for an interview recording —
+            # lets playback/delivery be debugged from outside without console
+            # credentials. Short-lived + private repo logs = acceptable.
+            presign-recording)
+              [[ "$ARG" =~ ^[0-9a-f-]{36}$ ]] || { echo "arg must be an interview uuid"; exit 1; }
+              CMD="$COMPOSE exec -T backend python -c \"import asyncio; from app.core import storage; print(asyncio.run(storage.presign_get(storage.BUCKET_RECORDINGS, '$ARG/audio.ogg', public=True)))\""
+              ;;
             # Generates the token ON the box, rewrites the .env.prod line,
             # recreates the services that read it, then proves auth works by
             # curling /internal from inside the backend container (expect 404
