@@ -319,8 +319,11 @@ One-time setup:
 2. **GitHub OIDC provider** (IAM → Identity providers → Add):
    provider `token.actions.githubusercontent.com`, audience `sts.amazonaws.com`.
 
-3. **Deploy role** the workflow assumes. Trust policy (locks it to this repo's
-   main branch):
+3. **Deploy role** the workflow assumes. Trust policy — the sub claim must be
+   the `production` **environment**, not a ref: a job that declares
+   `environment: production` gets an OIDC token with
+   `sub = repo:<owner>/<repo>:environment:production`, and a ref-based
+   condition would reject it at AssumeRole:
 
    ```json
    {
@@ -331,7 +334,7 @@ One-time setup:
        "Action": "sts:AssumeRoleWithWebIdentity",
        "Condition": {
          "StringEquals": { "token.actions.githubusercontent.com:aud": "sts.amazonaws.com" },
-         "StringLike": { "token.actions.githubusercontent.com:sub": "repo:iamvishalkhare/kandidly:ref:refs/heads/main" }
+         "StringLike": { "token.actions.githubusercontent.com:sub": "repo:iamvishalkhare/kandidly:environment:production" }
        }
      }]
    }
