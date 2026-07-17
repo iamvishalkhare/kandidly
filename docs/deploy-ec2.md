@@ -298,14 +298,16 @@ section (and the Caddyfile gate block, the `dev_users` gating in
 ## 10. CI deploy on push to main (GitHub Actions + SSM)
 
 Two workflows. `.github/workflows/ci.yml` runs on every PR and push to
-`main`: backend lint (ruff + mypy), backend tests against Postgres 16 + Redis
-7 service containers (migrated, seeded, including the `tests/api` suite over
-the real app), and the web lint + typecheck + build. `.github/workflows/
-deploy.yml` fires via `workflow_run` when CI **succeeds on `main`** and runs
-`infra/deploy.sh` on the box via **AWS SSM send-command** — no inbound SSH
-(the security group stays closed to GitHub's runners), no long-lived AWS keys
-(GitHub OIDC). Deploys serialize (`concurrency: prod-deploy`) and go red when
-the post-deploy health check can't see the new commit's sha on `/healthz`.
+`main` (plus a weekly scheduled CodeQL sweep): backend lint (ruff + mypy),
+backend tests against Postgres 16 + Redis 7 service containers (migrated,
+seeded, including the `tests/api` suite over the real app), the web lint +
+typecheck + build, and CodeQL analysis (actions / js-ts / python).
+`.github/workflows/cd.yml` fires via `workflow_run` when CI **succeeds on a
+push to `main`** (scheduled greens never deploy) and runs `infra/deploy.sh`
+on the box via **AWS SSM send-command** — no inbound SSH (the security group
+stays closed to GitHub's runners), no long-lived AWS keys (GitHub OIDC).
+Deploys serialize (`concurrency: prod-deploy`) and go red when the
+post-deploy health check can't see the new commit's sha on `/healthz`.
 Deploys never touch data: named volumes persist, migrations are in-place, and
 nothing in CI seeds.
 
