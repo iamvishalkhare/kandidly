@@ -806,9 +806,7 @@ async def build_report(
         agent = report_writer()
         # Same hung-provider guard as run_scoring; the except below already
         # falls back to the deterministic report.
-        result = await agent.run(
-            filled_report_prompt, model_settings=ModelSettings(timeout=180)
-        )
+        result = await agent.run(filled_report_prompt, model_settings=ModelSettings(timeout=180))
         draft = getattr(result, "output", None) or getattr(result, "data", None)
     except Exception as exc:  # noqa: BLE001
         log.warning(
