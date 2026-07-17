@@ -41,6 +41,13 @@ set +a
 log "git pull"
 git -C "$REPO_DIR" pull --ff-only
 
+# Deployed commit — interpolated into the backend container env
+# (compose.prod.yml KANDIDLY_GIT_SHA) and echoed by /healthz, so the health
+# check below can prove the new code is actually serving.
+GIT_SHA="$(git -C "$REPO_DIR" rev-parse HEAD)"
+export GIT_SHA
+log "deploying $GIT_SHA"
+
 # ── build ────────────────────────────────────────────────────────────────────
 log "build images"
 "${COMPOSE[@]}" build
@@ -76,18 +83,22 @@ docker image prune -f >/dev/null || true
 log "health check"
 healthy=0
 for i in $(seq 1 45); do
-  if curl -fsS --resolve "api.${DOMAIN}:443:127.0.0.1" \
-       "https://api.${DOMAIN}/healthz" 2>/dev/null | grep -q '"status":"ok"'; then
+  body="$(curl -fsS --resolve "api.${DOMAIN}:443:127.0.0.1" \
+       "https://api.${DOMAIN}/healthz" 2>/dev/null || true)"
+  # Require both healthy status AND the just-pulled sha — an old container
+  # still answering must not pass the check.
+  if grep -q '"status":"ok"' <<<"$body" && grep -q "\"sha\":\"$GIT_SHA\"" <<<"$body"; then
     healthy=1
     break
   fi
   sleep 2
 done
 if [[ "$healthy" != 1 ]]; then
+  echo "last /healthz body: ${body:-<empty>} (expected sha $GIT_SHA)"
   "${COMPOSE[@]}" ps || true
   echo '--- backend logs ---'; "${COMPOSE[@]}" logs --tail 50 backend || true
   echo '--- caddy logs ---';   "${COMPOSE[@]}" logs --tail 50 caddy   || true
-  fail "https://api.${DOMAIN}/healthz not healthy after 90s"
+  fail "https://api.${DOMAIN}/healthz not healthy at $GIT_SHA after 90s"
 fi
 
 # SPA should answer with the index document.

@@ -87,6 +87,19 @@ sudo curl -fsSL "https://github.com/docker/compose/releases/latest/download/dock
 sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
 ```
 
+Same story for `docker buildx` — `compose build` shells out to it, and if it's
+missing or older than 0.17.0 you'll see `compose build requires buildx 0.17.0
+or later`. Unlike the compose binary above, buildx's release filenames embed
+the version, so resolve the latest tag via the GitHub API first:
+
+```bash
+BUILDX_VERSION=$(curl -fsSL https://api.github.com/repos/docker/buildx/releases/latest | grep -oP '"tag_name": "\K[^"]+')
+sudo curl -fsSL "https://github.com/docker/buildx/releases/download/${BUILDX_VERSION}/buildx-${BUILDX_VERSION}.linux-amd64" \
+  -o /usr/local/lib/docker/cli-plugins/docker-buildx
+sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-buildx
+docker buildx version
+```
+
 (AL2023 runs SELinux in permissive mode by default; the compose files already
 carry `:z` labels on bind mounts, so enforcing mode also works — Docker
 honors the same SELinux label flags as podman did.)
@@ -284,11 +297,17 @@ section (and the Caddyfile gate block, the `dev_users` gating in
 
 ## 10. CI deploy on push to main (GitHub Actions + SSM)
 
-`.github/workflows/deploy.yml` runs on every push to `main`: backend tests +
-web build, then `infra/deploy.sh` on the box via **AWS SSM send-command** —
-no inbound SSH (the security group stays closed to GitHub's runners), no
-long-lived AWS keys (GitHub OIDC). Deploys never touch data: named volumes
-persist, migrations are in-place, and nothing in CI seeds.
+Two workflows. `.github/workflows/ci.yml` runs on every PR and push to
+`main`: backend lint (ruff + mypy), backend tests against Postgres 16 + Redis
+7 service containers (migrated, seeded, including the `tests/api` suite over
+the real app), and the web lint + typecheck + build. `.github/workflows/
+deploy.yml` fires via `workflow_run` when CI **succeeds on `main`** and runs
+`infra/deploy.sh` on the box via **AWS SSM send-command** — no inbound SSH
+(the security group stays closed to GitHub's runners), no long-lived AWS keys
+(GitHub OIDC). Deploys serialize (`concurrency: prod-deploy`) and go red when
+the post-deploy health check can't see the new commit's sha on `/healthz`.
+Deploys never touch data: named volumes persist, migrations are in-place, and
+nothing in CI seeds.
 
 One-time setup:
 

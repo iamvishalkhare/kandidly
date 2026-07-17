@@ -1,0 +1,100 @@
+# CI — every PR and every push to main. Merges to main additionally trigger
+# the prod deploy (deploy.yml) via workflow_run once this workflow succeeds,
+# so a red job here blocks both the merge (branch protection) and the deploy.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# One live run per ref: superseded pushes get cancelled. A cancelled main run
+# never triggers deploy (conclusion != success); the newest commit's run does.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend-lint:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: ruff check
+        run: uv run --package kandidly-backend ruff check .
+      - name: ruff format
+        run: uv run --package kandidly-backend ruff format --check .
+      - name: mypy
+        run: uv run --package kandidly-backend mypy app
+
+  backend-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: kandidly
+          POSTGRES_PASSWORD: kandidly
+          POSTGRES_DB: kandidly_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U kandidly -d kandidly_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      KANDIDLY_DATABASE_URL: postgresql+asyncpg://kandidly:kandidly@localhost:5432/kandidly_test
+      KANDIDLY_REDIS_URL: redis://localhost:6379/0
+      KANDIDLY_AUTH_DEV_MODE: "true"
+      # Deliberately unreachable: the seed skips media uploads, and no test may
+      # leave the runner. LLM/LiveKit/Resend stay env-disabled or mocked — the
+      # API suite (tests/api) captures job enqueues in-process and the captcha
+      # guard runs its fail-open path (no secret configured).
+      KANDIDLY_S3_ENDPOINT: "http://localhost:59000"
+      KANDIDLY_API_TESTS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: alembic upgrade head
+        run: uv run --package kandidly-backend alembic upgrade head
+      - name: seed fixtures
+        run: uv run --package kandidly-backend python -m app.db.seed
+      - name: pytest (unit + API suite)
+        run: uv run --package kandidly-backend pytest -q
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - name: lint (oxlint)
+        run: npm run lint
+      - name: typecheck + build (tsc -b && vite build)
+        run: npm run build

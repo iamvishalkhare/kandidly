@@ -79,6 +79,10 @@ services:
     restart: unless-stopped
     # Image CMD: uvicorn app.main:app on :8000, no --reload.
     env_file: .env.prod
+    environment:
+      # Deployed commit, exported by deploy.sh after git pull; /healthz echoes
+      # it so the post-deploy check can prove the new code is live.
+      KANDIDLY_GIT_SHA: ${GIT_SHA:-}
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz"]
       interval: 10s
