@@ -62,9 +62,7 @@ async def test_interview_capacity_open_under_threshold(monkeypatch):
 
 
 async def test_interview_capacity_hold_at_threshold(monkeypatch):
-    monkeypatch.setattr(
-        plan, "interview_count", _fixed_count(settings.free_plan_interview_hold_at)
-    )
+    monkeypatch.setattr(plan, "interview_count", _fixed_count(settings.free_plan_interview_hold_at))
     with pytest.raises(AppError) as exc:
         await plan.ensure_interview_capacity(None, uuid4())
     assert exc.value.code == "plan_limit"

@@ -61,9 +61,7 @@ async def verify_recaptcha(token: str, *, remoteip: str | None, action: str) -> 
         raise AppError("captcha_failed", "Captcha action mismatch")
     score = data.get("score")
     if score is not None and score < settings.recaptcha_min_score:
-        raise AppError(
-            "captcha_failed", "Captcha score too low", detail={"score": score}
-        )
+        raise AppError("captcha_failed", "Captcha score too low", detail={"score": score})
 
 
 def require_captcha(action: str):
@@ -74,11 +72,7 @@ def require_captcha(action: str):
     async def _dep(request: Request) -> None:
         token = request.headers.get("x-recaptcha-token", "")
         fwd = request.headers.get("x-forwarded-for")
-        ip = (
-            fwd.split(",")[0].strip()
-            if fwd
-            else (request.client.host if request.client else None)
-        )
+        ip = fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else None)
         await verify_recaptcha(token, remoteip=ip, action=action)
 
     return Depends(_dep)

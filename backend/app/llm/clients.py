@@ -24,7 +24,6 @@ from app.llm.schemas import (
     TurnAnnotationOut,
 )
 
-
 # Maps a `provider:model` prefix to the plain env var the provider SDK reads and
 # the corresponding KANDIDLY_-prefixed setting. Prefixes are what pydantic-ai's
 # model-string inference accepts (SPEC §3.3).

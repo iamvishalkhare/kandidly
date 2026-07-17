@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, date
+from datetime import UTC
+
 import pytest
 from pydantic import ValidationError
 
-from app.api.console import _closes_at_from, ConsoleRequisitionIn
+from app.api.console import ConsoleRequisitionIn, _closes_at_from
 
 
 def test_closes_at_from():

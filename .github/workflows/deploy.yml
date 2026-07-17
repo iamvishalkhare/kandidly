@@ -1,18 +1,23 @@
-# Prod deploy: every push to main runs infra/deploy.sh on the EC2 box via AWS
-# SSM (no inbound SSH needed; auth is GitHub OIDC → IAM role). The script is
-# the contract — pull → build → migrate → up → health check — and it never
-# seeds: Postgres/MinIO state lives in named volumes and persists across
-# deploys. One-time AWS/GitHub setup: docs/deploy-ec2.md §10.
+# Prod deploy: runs infra/deploy.sh on the EC2 box via AWS SSM (no inbound
+# SSH; auth is GitHub OIDC → IAM role) after CI succeeds on a push to main —
+# the workflow_run trigger fires on ci.yml completion and the job gates on
+# conclusion == success, so a red CI never deploys. The script is the
+# contract — pull → build → migrate → up → health check (which requires the
+# new sha on /healthz) — and it never seeds: Postgres/MinIO state lives in
+# named volumes and persists across deploys. One-time AWS/GitHub setup:
+# docs/deploy-ec2.md §10.
 name: deploy
 
 on:
-  push:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
     branches: [main]
 
 # Queue deploys, never run two at once (deploy.sh is idempotent but not
 # concurrent-safe: two docker compose builds would race).
 concurrency:
-  group: deploy-prod
+  group: prod-deploy
   cancel-in-progress: false
 
 permissions:
@@ -20,27 +25,10 @@ permissions:
   contents: read
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-      - name: Backend tests
-        working-directory: backend
-        run: uv run --package kandidly-backend pytest -q
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - name: Web build
-        working-directory: web
-        run: |
-          npm ci
-          npm run build
-
   deploy:
-    needs: test
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 45
@@ -53,6 +41,7 @@ jobs:
       - name: Run deploy.sh on the instance via SSM
         env:
           INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
 
@@ -64,7 +53,7 @@ jobs:
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "$INSTANCE_ID" \
             --document-name AWS-RunShellScript \
-            --comment "kandidly deploy ${GITHUB_SHA::7}" \
+            --comment "kandidly deploy ${HEAD_SHA::7}" \
             --timeout-seconds 2700 \
             --parameters "commands=[\"runuser -l ec2-user -c '/opt/kandidly/infra/deploy.sh'\"]" \
             --query Command.CommandId --output text)

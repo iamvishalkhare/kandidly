@@ -1,6 +1,6 @@
 import logging
+
 from dotenv import load_dotenv
-from livekit import rtc
 from livekit.agents import (
     Agent,
     AgentServer,
@@ -58,6 +58,7 @@ You are interacting with the user via voice, and must apply the following rules 
 - For medical, legal, or financial topics, provide general information only and suggest consulting a qualified professional.
 - Protect privacy and minimize sensitive data.""",
         )
+
     async def on_enter(self):
         await self.session.generate_reply(
             instructions="""Greet the user and offer your assistance.""",
@@ -67,10 +68,13 @@ You are interacting with the user via voice, and must apply the following rules 
 
 server = AgentServer()
 
+
 def prewarm(proc: JobProcess):
     proc.userdata["vad"] = silero.VAD.load()
 
+
 server.setup_fnc = prewarm
+
 
 @server.rtc_session(agent_name="kandidly_interviewer")
 async def entrypoint(ctx: JobContext):
@@ -82,7 +86,7 @@ async def entrypoint(ctx: JobContext):
         tts=inference.TTS(
             model="cartesia/sonic-3.5",
             voice="5c5ad5e7-1020-476b-8b91-fdcbe9cc313c",
-            language="es-MX"
+            language="es-MX",
         ),
         turn_handling=TurnHandlingOptions(turn_detection=MultilingualModel()),
         vad=ctx.proc.userdata["vad"],

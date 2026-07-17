@@ -74,7 +74,9 @@ def _token_key(token: str) -> str:
 async def revoke_token(token: str) -> None:
     from app.core import cache
 
-    await cache.set_json(_token_key(token), {"revoked": True}, ttl=settings.auth_revoked_token_ttl_s)
+    await cache.set_json(
+        _token_key(token), {"revoked": True}, ttl=settings.auth_revoked_token_ttl_s
+    )
 
 
 async def is_token_revoked(token: str) -> bool:
