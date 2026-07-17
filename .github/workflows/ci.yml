@@ -1,17 +1,23 @@
-# CI — every PR and every push to main. Merges to main additionally trigger
-# the prod deploy (deploy.yml) via workflow_run once this workflow succeeds,
-# so a red job here blocks both the merge (branch protection) and the deploy.
+# CI — every PR and every push to main, plus a weekly scheduled CodeQL sweep
+# (new query packs re-scan old code). Merges to main additionally trigger the
+# prod deploy (cd.yml) via workflow_run once this workflow succeeds, so a red
+# job here blocks both the merge (branch protection) and the deploy; cd.yml
+# ignores schedule-triggered runs.
 name: ci
 
 on:
   pull_request:
   push:
     branches: [main]
+  schedule:
+    - cron: "17 15 * * 3"
 
 # One live run per ref: superseded pushes get cancelled. A cancelled main run
 # never triggers deploy (conclusion != success); the newest commit's run does.
+# event_name in the group keeps the weekly scheduled run from cancelling (or
+# being cancelled by) an in-flight push run on main.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -98,3 +104,36 @@ jobs:
         run: npm run lint
       - name: typecheck + build (tsc -b && vite build)
         run: npm run build
+
+  # CodeQL scanning (absorbed from the standalone codeql.yml so security
+  # analysis gates the same green as lint/tests). Job name kept as
+  # "Analyze (<language>)" so existing required-check selections still match.
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write # upload SARIF results
+      packages: read # fetch CodeQL query packs
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: actions
+            build-mode: none
+          - language: javascript-typescript
+            build-mode: none
+          - language: python
+            build-mode: none
+    steps:
+      - uses: actions/checkout@v4
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:${{ matrix.language }}"

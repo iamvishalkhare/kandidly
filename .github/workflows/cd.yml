@@ -1,12 +1,13 @@
-# Prod deploy: runs infra/deploy.sh on the EC2 box via AWS SSM (no inbound
-# SSH; auth is GitHub OIDC → IAM role) after CI succeeds on a push to main —
-# the workflow_run trigger fires on ci.yml completion and the job gates on
-# conclusion == success, so a red CI never deploys. The script is the
-# contract — pull → build → migrate → up → health check (which requires the
-# new sha on /healthz) — and it never seeds: Postgres/MinIO state lives in
-# named volumes and persists across deploys. One-time AWS/GitHub setup:
+# CD — prod deploy: runs infra/deploy.sh on the EC2 box via AWS SSM (no
+# inbound SSH; auth is GitHub OIDC → IAM role) after CI succeeds on a push to
+# main — the workflow_run trigger fires on ci.yml completion and the job
+# gates on conclusion == success AND event == push (ci.yml also runs on a
+# weekly CodeQL schedule; a scheduled green must not redeploy). The script is
+# the contract — pull → build → migrate → up → health check (which requires
+# the new sha on /healthz) — and it never seeds: Postgres/MinIO state lives
+# in named volumes and persists across deploys. One-time AWS/GitHub setup:
 # docs/deploy-ec2.md §10.
-name: deploy
+name: cd
 
 on:
   workflow_run:
@@ -28,7 +29,8 @@ jobs:
   deploy:
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_branch == 'main'
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.event == 'push'
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 45
