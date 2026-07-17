@@ -25,12 +25,13 @@ on:
           - rotate-service-token
           - restart-caddy
           - presign-recording
+          - enqueue-scoring
       tail:
         description: Log lines to tail
         type: string
         default: "300"
       arg:
-        description: Action argument (presign-recording; interview UUID)
+        description: Action argument (presign-recording / enqueue-scoring; interview UUID)
         type: string
         default: ""
 
@@ -80,6 +81,14 @@ jobs:
             presign-recording)
               [[ "$ARG" =~ ^[0-9a-f-]{36}$ ]] || { echo "arg must be an interview uuid"; exit 1; }
               CMD="$COMPOSE exec -T backend /app/.venv/bin/python -c \"import asyncio; from app.core import storage; print(asyncio.run(storage.presign_get(storage.BUCKET_RECORDINGS, '$ARG/audio.ogg', public=True)))\""
+              ;;
+            # Re-enqueues run_scoring for an interview whose scoring job died
+            # (e.g. killed by the arq job timeout — arq never retries those).
+            # Safe to repeat: the job reuses the existing ScoringJob row and
+            # skips already-persisted criterion scores.
+            enqueue-scoring)
+              [[ "$ARG" =~ ^[0-9a-f-]{36}$ ]] || { echo "arg must be an interview uuid"; exit 1; }
+              CMD="$COMPOSE exec -T backend /app/.venv/bin/python -c \"import asyncio; from app.core.queue import enqueue; asyncio.run(enqueue('run_scoring', '$ARG')); print('enqueued run_scoring $ARG')\""
               ;;
             # Generates the token ON the box, rewrites the .env.prod line,
             # recreates the services that read it, then proves auth works by

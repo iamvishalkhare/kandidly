@@ -365,7 +365,12 @@ async def run_scoring(ctx: dict, interview_id: str) -> None:
     from pydantic_ai import Agent
     from pydantic_ai.settings import ModelSettings
 
-    score_model_settings = ModelSettings(temperature=0.4)
+    # `timeout` bounds each provider request: an OpenRouter call that hung for
+    # 13 minutes ate the whole 900s arq budget mid-loop (2026-07-17), and a
+    # job killed by arq's timeout is never retried — scoring stuck at
+    # 'evaluating' forever. With a per-call cap the existing
+    # attempt/skip/idempotency logic handles slow providers gracefully.
+    score_model_settings = ModelSettings(temperature=0.4, timeout=90)
 
     for criterion in criteria:
         packet = build_evidence_packet(
@@ -795,9 +800,15 @@ async def build_report(
 
     draft: ReportDraft | None = None
     try:
+        from pydantic_ai.settings import ModelSettings
+
         ensure_provider_env(settings.report_llm)
         agent = report_writer()
-        result = await agent.run(filled_report_prompt)
+        # Same hung-provider guard as run_scoring; the except below already
+        # falls back to the deterministic report.
+        result = await agent.run(
+            filled_report_prompt, model_settings=ModelSettings(timeout=180)
+        )
         draft = getattr(result, "output", None) or getattr(result, "data", None)
     except Exception as exc:  # noqa: BLE001
         log.warning(
