@@ -24,6 +24,16 @@
 # path matchers see the original URL (not the try_files rewrite).
 {
 	email {$ACME_EMAIL}
+	# TCP-only edge: the EC2 security group doesn't pass UDP 443, but Caddy
+	# advertises HTTP/3 by default (alt-svc: h3, cached by browsers for 30
+	# days). Chrome then sent follow-up requests — notably the review page's
+	# audio range fetches — into a QUIC black hole: shown as (canceled),
+	# player buffering forever (2026-07-17). curl/h2 probes all passed, which
+	# is what made it hard to spot. Re-enable h3 only after opening UDP 443
+	# in the security group.
+	servers {
+		protocols h1 h2
+	}
 }
 
 {$DOMAIN} {
