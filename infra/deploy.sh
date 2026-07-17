@@ -40,6 +40,10 @@ set +a
 # values would silently break every upload with SignatureDoesNotMatch.
 : "${MINIO_ROOT_USER:?MINIO_ROOT_USER not set in .env.prod}"
 : "${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD not set in .env.prod}"
+# Empty (as opposed to absent) breaks agent /internal auth with 401s: the
+# agent sends an empty X-Service-Token and the backend rejects it. Use
+# `gh workflow run ops -f action=rotate-service-token` to set a fresh one.
+: "${KANDIDLY_SERVICE_TOKEN:?KANDIDLY_SERVICE_TOKEN empty/not set in .env.prod}"
 
 # ── pull ─────────────────────────────────────────────────────────────────────
 log "git pull"

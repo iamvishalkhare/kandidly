@@ -1,8 +1,11 @@
-# Ops — read-only prod diagnostics over the same OIDC→SSM channel as cd.yml.
-# Manual only (workflow_dispatch → Actions tab). The command set is fixed on
-# purpose: this stays diagnostics, not a remote shell — anything that mutates
-# the box goes through cd.yml/deploy.sh. Output lands in the workflow log
-# (SSM truncates captured output at 24 000 chars; full logs stay on the box).
+# Ops — prod diagnostics over the same OIDC→SSM channel as cd.yml. Manual
+# only (workflow_dispatch → Actions tab). The command set is fixed on purpose:
+# this is not a remote shell — code changes go through cd.yml/deploy.sh. One
+# sanctioned mutation exists: rotate-service-token generates a fresh
+# KANDIDLY_SERVICE_TOKEN on the box (the secret never leaves it — workflow
+# inputs/logs would expose one passed from outside) and bounces the services
+# that read it. Output lands in the workflow log (SSM truncates captured
+# output at 24 000 chars; full logs stay on the box).
 name: ops
 
 on:
@@ -19,6 +22,7 @@ on:
           - logs-caddy
           - logs-minio-init
           - compose-ps
+          - rotate-service-token
       tail:
         description: Log lines to tail
         type: string
@@ -58,6 +62,13 @@ jobs:
           case "$ACTION" in
             logs-*) CMD="$COMPOSE logs --tail $TAIL --timestamps ${ACTION#logs-}" ;;
             compose-ps) CMD="$COMPOSE ps -a" ;;
+            # Generates the token ON the box, rewrites the .env.prod line,
+            # recreates the services that read it, then proves auth works by
+            # curling /internal from inside the backend container (expect 404
+            # for the dummy id; 401 means the token still doesn't match).
+            rotate-service-token)
+              CMD='set -e; f=/opt/kandidly/infra/.env.prod; tok=$(openssl rand -hex 32); if grep -q "^KANDIDLY_SERVICE_TOKEN=" "$f"; then sed -i "s/^KANDIDLY_SERVICE_TOKEN=.*/KANDIDLY_SERVICE_TOKEN=$tok/" "$f"; else printf "KANDIDLY_SERVICE_TOKEN=%s\n" "$tok" >> "$f"; fi; chown ec2-user:ec2-user "$f"; chmod 600 "$f"; docker compose -f /opt/kandidly/infra/compose.prod.yml up -d backend worker agent; sleep 25; docker compose -f /opt/kandidly/infra/compose.prod.yml exec -T backend sh -c "curl -s -o /dev/null -w \"internal-auth-status:%{http_code}\n\" -H \"X-Service-Token: \$KANDIDLY_SERVICE_TOKEN\" http://localhost:8000/internal/interviews/00000000-0000-0000-8000-000000000000/bootstrap"'
+              ;;
             *) echo "unknown action: $ACTION"; exit 1 ;;
           esac
 
