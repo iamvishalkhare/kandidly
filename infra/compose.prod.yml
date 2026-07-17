@@ -128,6 +128,13 @@ services:
     restart: unless-stopped
     # Image CMD: python worker.py start (LiveKit Cloud rooms + inference).
     env_file: .env.prod
+    environment:
+      # The /internal API lives on the compose network. config.py's default
+      # (http://localhost:8000) only fits the dev setup where the agent runs
+      # on the host next to a local backend — inside this container it dials
+      # itself, so every bootstrap/turn/status write failed and interviews
+      # never reached status=live (2026-07-17 incident).
+      KANDIDLY_BACKEND_URL: http://backend:8000
     depends_on:
       redis:
         condition: service_healthy
