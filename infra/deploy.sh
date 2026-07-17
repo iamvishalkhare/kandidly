@@ -36,6 +36,10 @@ set +a
 : "${VITE_API_BASE:?VITE_API_BASE not set in .env.prod (baked into the web bundle)}"
 : "${POSTGRES_USER:?POSTGRES_USER not set in .env.prod}"
 : "${POSTGRES_DB:?POSTGRES_DB not set in .env.prod}"
+# Interpolated into backend/worker as the S3 creds (compose.prod.yml) — empty
+# values would silently break every upload with SignatureDoesNotMatch.
+: "${MINIO_ROOT_USER:?MINIO_ROOT_USER not set in .env.prod}"
+: "${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD not set in .env.prod}"
 
 # ── pull ─────────────────────────────────────────────────────────────────────
 log "git pull"
