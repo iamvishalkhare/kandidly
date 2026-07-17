@@ -50,12 +50,15 @@ jobs:
           # leave root-owned files behind). runuser -l starts a fresh login
           # session, so ec2-user's docker group membership (runbook §2) is
           # already active — no extra env needed, unlike rootless podman.
+          # The pull happens BEFORE deploy.sh (which re-pulls as a no-op):
+          # bash keeps the old inode of an already-running script, so without
+          # this every deploy would execute the PREVIOUS deploy.sh.
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "$INSTANCE_ID" \
             --document-name AWS-RunShellScript \
             --comment "kandidly deploy ${HEAD_SHA::7}" \
             --timeout-seconds 2700 \
-            --parameters "commands=[\"runuser -l ec2-user -c '/opt/kandidly/infra/deploy.sh'\"]" \
+            --parameters "commands=[\"runuser -l ec2-user -c 'git -C /opt/kandidly pull --ff-only && /opt/kandidly/infra/deploy.sh'\"]" \
             --query Command.CommandId --output text)
           echo "SSM command: $COMMAND_ID"
 
