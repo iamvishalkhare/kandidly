@@ -79,7 +79,7 @@ jobs:
             # credentials. Short-lived + private repo logs = acceptable.
             presign-recording)
               [[ "$ARG" =~ ^[0-9a-f-]{36}$ ]] || { echo "arg must be an interview uuid"; exit 1; }
-              CMD="$COMPOSE exec -T backend python -c \"import asyncio; from app.core import storage; print(asyncio.run(storage.presign_get(storage.BUCKET_RECORDINGS, '$ARG/audio.ogg', public=True)))\""
+              CMD="$COMPOSE exec -T backend /app/.venv/bin/python -c \"import asyncio; from app.core import storage; print(asyncio.run(storage.presign_get(storage.BUCKET_RECORDINGS, '$ARG/audio.ogg', public=True)))\""
               ;;
             # Generates the token ON the box, rewrites the .env.prod line,
             # recreates the services that read it, then proves auth works by
