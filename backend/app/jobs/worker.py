@@ -28,8 +28,11 @@ class WorkerSettings:
     redis_settings = RedisSettings.from_dsn(settings.redis_url)
     max_jobs = 50
     # analyze_snapshots at the 180-frame ceiling is ~30 vision calls with a
-    # retry each — comfortably under 900s, not always under 600s.
-    job_timeout = 900
+    # retry each — comfortably under 900s, not always under 600s. run_scoring
+    # is criteria × runs × attempts LLM calls, each now capped at 90s
+    # (interviews.py) — 1800s gives a degraded-provider run room to finish,
+    # because a job killed by this timeout is failed for good, never retried.
+    job_timeout = 1800
 
     functions = [
         parse_resume,
