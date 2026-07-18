@@ -97,7 +97,14 @@ def evidence_annotator():
 def rubric_scorer():
     # Realtime scoring goes through the Batch API (SPEC §11.3); this single-shot
     # agent is used for the E15 individual-retry fallback and for tests.
-    return _make_agent(settings.score_llm, CriterionScoreOut, load_prompt("score", "v1"))
+    # PromptedOutput to match jobs/interviews.run_scoring: in tool-call mode
+    # OpenRouter qwen3 omits `evidence` (defaults to []), which quote
+    # verification then turns into an all-zero "Not assessable" assessment.
+    from pydantic_ai import PromptedOutput  # lazy import
+
+    return _make_agent(
+        settings.score_llm, PromptedOutput(CriterionScoreOut), load_prompt("score", "v1")
+    )
 
 
 @lru_cache

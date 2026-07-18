@@ -362,7 +362,7 @@ async def run_scoring(ctx: dict, interview_id: str) -> None:
     raw_score_template = load_prompt("score", "v1")
 
     # --- 4. Score each criterion × run_index -----------------------------
-    from pydantic_ai import Agent
+    from pydantic_ai import Agent, PromptedOutput
     from pydantic_ai.settings import ModelSettings
 
     # `timeout` bounds each provider request: an OpenRouter call that hung for
@@ -397,12 +397,18 @@ async def run_scoring(ctx: dict, interview_id: str) -> None:
                 continue
 
             # Try to score — retry once on failure, then skip.
+            # PromptedOutput (JSON-by-instruction), NOT the default tool-call
+            # mode: OpenRouter's qwen3 reliably omits the `evidence` field in
+            # tool-call mode, and its default_factory lets that validate
+            # silently — every run then fails quote verification and the whole
+            # assessment aggregates to "Not assessable"/0 (2026-07-19 prod
+            # incident; reproduced 3/3 tool-call vs 3/3 clean with prompted).
             score_out: CriterionScoreOut | None = None
             for attempt in range(2):
                 try:
                     agent = Agent(
                         settings.score_llm,
-                        output_type=CriterionScoreOut,
+                        output_type=PromptedOutput(CriterionScoreOut),
                         defer_model_check=True,
                     )
                     result = await agent.run(filled_prompt, model_settings=score_model_settings)
@@ -426,6 +432,18 @@ async def run_scoring(ctx: dict, interview_id: str) -> None:
                     run_index=run_index,
                 )
                 continue
+
+            # A run with no evidence is guaranteed to be invalidated at
+            # aggregation (quote verification keeps nothing) — surface it
+            # loudly instead of letting the assessment zero out in silence.
+            if not score_out.evidence:
+                log.warning(
+                    "score_run_no_evidence",
+                    interview_id=interview_id,
+                    criterion_key=criterion["key"],
+                    run_index=run_index,
+                    score=score_out.score,
+                )
 
             # Persist the criterion_score row.
             async with SessionLocal() as db:
