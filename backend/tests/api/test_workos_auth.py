@@ -11,6 +11,7 @@ import uuid
 from types import SimpleNamespace
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
+import jwt
 import pytest
 from sqlalchemy import func, select
 
@@ -34,13 +35,15 @@ def _wuser(email: str, *, workos_id: str | None = None, first=None, last=None, p
 
 
 class _StubWorkOS:
-    """Mimics the two WorkOSClient.user_management calls the backend makes."""
+    """Mimics the WorkOSClient.user_management calls the backend makes."""
 
     def __init__(self):
         self.codes: dict[str, object] = {}
+        self.logout_urls: list[dict] = []  # records of get_logout_url() calls
         self.user_management = SimpleNamespace(
             get_authorization_url=self._authorize_url,
             authenticate_with_code=self._authenticate,
+            get_logout_url=self._logout_url,
         )
 
     def _authorize_url(self, *, provider, redirect_uri, state):
@@ -50,7 +53,20 @@ class _StubWorkOS:
         )
 
     def _authenticate(self, *, code):
-        return SimpleNamespace(user=self.codes[code])  # KeyError → route's auth_failed path
+        wuser = self.codes[code]  # KeyError → route's auth_failed path
+        # Real WorkOS access tokens are a JWT carrying a `sid` (session id)
+        # claim; the app decodes it unverified just to learn the session id.
+        access_token = jwt.encode(
+            {"sid": f"session_{wuser.id}"},
+            "unused-signing-key-for-tests-only-32b",
+            algorithm="HS256",
+        )
+        return SimpleNamespace(user=wuser, access_token=access_token)
+
+    def _logout_url(self, *, session_id, return_to=None):
+        self.logout_urls.append({"session_id": session_id, "return_to": return_to})
+        rt = quote(return_to or "")
+        return f"https://auth.workos.test/sessions/logout?session_id={session_id}&return_to={rt}"
 
 
 @pytest.fixture
@@ -345,6 +361,26 @@ async def test_minted_jwt_logout_denylist(client, workos):
     r = await client.get("/api/auth/me", headers=auth(token))
     assert r.status_code == 401
     assert "logged out" in r.json()["message"]
+
+
+async def test_logout_ends_workos_session_too(client, workos):
+    """Logout must return a WorkOS session-logout URL, not just denylist our
+    own JWT — otherwise AuthKit's SSO cookie survives and a later /login
+    silently re-authenticates the same account without prompting."""
+    wuser = _wuser(f"bye2-{uuid.uuid4().hex[:8]}@x.dev")
+    token = await _token_from(await _login(client, workos, wuser))
+
+    r = await client.post("/api/auth/logout?return_to=/console", headers=auth(token))
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["logout_url"], "expected a WorkOS logout_url to end the SSO session"
+
+    url = urlsplit(body["logout_url"])
+    assert url.netloc == "auth.workos.test"
+    qs = parse_qs(url.query)
+    assert qs["session_id"][0] == f"session_{wuser.id}"
+    assert unquote(qs["return_to"][0]) == "http://localhost:5173/console"
 
 
 async def test_dev_token_rejected_outside_dev_env(client, monkeypatch, candidate):

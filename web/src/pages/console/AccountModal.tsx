@@ -193,16 +193,20 @@ export default function AccountModal({ open, onClose }: { open: boolean; onClose
   const handleLogout = async () => {
     if (loggingOut) return;
     setLoggingOut(true);
+    let logoutUrl: string | null = null;
     try {
       // Revoke the token server-side; even if unreachable, still clear locally.
-      await authApi.logout();
+      const res = await authApi.logout('/');
+      logoutUrl = res.logout_url ?? null;
     } catch {
       /* best-effort */
     }
     queryClient.clear();
     clearAuth();
     // Hard replace: wipes in-memory state and keeps the console out of history.
-    window.location.replace('/');
+    // Route through WorkOS's own logout when available so its SSO cookie
+    // actually dies too — otherwise the next sign-in silently reuses it.
+    window.location.replace(logoutUrl || '/');
   };
 
   return (

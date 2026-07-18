@@ -15,7 +15,11 @@ token already only lives in localStorage. Failures redirect with
 account_invited | not_console_account | not_candidate_account) so the SPA can
 show a clean error screen.
 
-Logout stays token-scheme-agnostic: denylist the presented bearer in Redis.
+Logout denylists the presented bearer in Redis (kills our own session) *and*
+ends the WorkOS AuthKit hosted session (kills its SSO cookie) — skipping the
+latter would let a subsequent `/login` silently re-authenticate the same
+account without ever prompting, since AuthKit's own cookie would still be
+live in the browser.
 """
 
 from __future__ import annotations
@@ -23,6 +27,7 @@ from __future__ import annotations
 import secrets
 from urllib.parse import quote
 
+import jwt as pyjwt
 from fastapi import APIRouter, Depends, Header
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -48,6 +53,20 @@ def _safe_return_to(raw: str | None) -> str:
     if raw and raw.startswith("/") and not raw.startswith("//"):
         return raw
     return "/"
+
+
+def _workos_session_id(access_token: str | None) -> str | None:
+    """Pull the `sid` claim off WorkOS's access token. Not verified — WorkOS
+    already vouched for this token during the code exchange; we only need the
+    session id to ask WorkOS to end that same session at logout."""
+    if not access_token:
+        return None
+    try:
+        payload = pyjwt.decode(access_token, options={"verify_signature": False})
+    except pyjwt.InvalidTokenError:
+        return None
+    sid = payload.get("sid")
+    return str(sid) if sid else None
 
 
 @router.get("/login", dependencies=[rate_limit("auth_login", 30, by="ip")])
@@ -104,7 +123,14 @@ async def callback(
     if intent == "candidate" and user.role != "candidate":
         return _spa_error("not_candidate_account")
 
-    token = mint_app_jwt(user_id=user.id, email=user.email, role=user.role, org_id=user.org_id)
+    wos_sid = _workos_session_id(getattr(auth_resp, "access_token", None))
+    token = mint_app_jwt(
+        user_id=user.id,
+        email=user.email,
+        role=user.role,
+        org_id=user.org_id,
+        workos_session_id=wos_sid,
+    )
     await record_audit(
         db,
         actor_id=user.id,
@@ -139,6 +165,7 @@ async def me(
 
 @router.post("/logout")
 async def logout(
+    return_to: str | None = None,
     user: AuthUser = Depends(get_current_user),
     authorization: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
@@ -153,4 +180,13 @@ async def logout(
         entity_type="user",
         entity_id=user.user_id,
     )
-    return {"ok": True}
+    logout_url = None
+    if user.workos_session_id:
+        try:
+            logout_url = get_client().user_management.get_logout_url(
+                session_id=user.workos_session_id,
+                return_to=f"{settings.base_url_web}{_safe_return_to(return_to)}",
+            )
+        except Exception:  # noqa: BLE001 — app-side logout above already happened
+            logout_url = None
+    return {"ok": True, "logout_url": logout_url}

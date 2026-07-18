@@ -116,9 +116,20 @@ export const authApi = {
     });
     return data;
   },
-  /** Revokes the current bearer token server-side (Redis denylist + audit). */
-  logout: async (): Promise<void> => {
-    await api.post('/api/auth/logout');
+  /**
+   * Revokes the current bearer token server-side (Redis denylist + audit)
+   * and, if this session came through WorkOS, returns a `logout_url` that
+   * also ends the AuthKit hosted SSO session. The caller MUST navigate the
+   * browser there (full page load, not XHR) — skipping it leaves AuthKit's
+   * own cookie live, so a later sign-in silently reuses the same account
+   * instead of prompting. `returnTo` is a same-app path to land on afterward.
+   */
+  logout: async (returnTo?: string): Promise<{ logout_url?: string | null }> => {
+    const qs = returnTo ? `?return_to=${encodeURIComponent(returnTo)}` : '';
+    const { data } = await api.post<{ ok: boolean; logout_url?: string | null }>(
+      `/api/auth/logout${qs}`
+    );
+    return data;
   },
 };
 

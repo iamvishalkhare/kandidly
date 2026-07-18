@@ -209,13 +209,22 @@ export default function CandidateLanding() {
   })();
 
   const switchAccount = async () => {
+    let logoutUrl: string | null = null;
     try {
-      await authApi.logout(); // best-effort server-side revoke
+      // best-effort server-side revoke; also ends the WorkOS SSO session so
+      // the next startLogin() actually prompts instead of silently reusing
+      // the mismatched account.
+      const res = await authApi.logout(`/i/${token}`);
+      logoutUrl = res.logout_url ?? null;
     } catch {
       /* clearing locally is what matters here */
     }
     clearAuth();
-    startLogin();
+    if (logoutUrl) {
+      window.location.href = logoutUrl;
+    } else {
+      startLogin();
+    }
   };
 
   const handleStart = () => {

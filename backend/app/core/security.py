@@ -28,17 +28,31 @@ class AuthUser:
     email: str
     role: Role
     org_id: UUID | None = None
+    workos_session_id: str | None = None
 
 
-def mint_app_jwt(*, user_id: UUID, email: str, role: str, org_id: UUID | None) -> str:
+def mint_app_jwt(
+    *,
+    user_id: UUID,
+    email: str,
+    role: str,
+    org_id: UUID | None,
+    workos_session_id: str | None = None,
+) -> str:
     """Bearer JWT handed to the SPA after the AuthKit callback. Claim shape
-    matches what verify_jwt resolves (sub/email/role/org_id)."""
+    matches what verify_jwt resolves (sub/email/role/org_id/wos_sid).
+
+    `workos_session_id` (the `sid` claim off WorkOS's own access token) rides
+    along so logout can end the AuthKit hosted session too — otherwise its
+    SSO cookie survives our logout and a subsequent /login silently
+    re-authenticates the same account without prompting."""
     now = datetime.now(UTC)
     payload = {
         "sub": str(user_id),
         "email": email,
         "role": role,
         "org_id": str(org_id) if org_id else None,
+        "wos_sid": workos_session_id,
         "iat": now,
         "exp": now + timedelta(seconds=settings.jwt_ttl_s),
     }
@@ -82,6 +96,7 @@ def verify_jwt(token: str) -> AuthUser:
         email=email or "",
         role=role,
         org_id=UUID(str(org_id)) if org_id else None,
+        workos_session_id=payload.get("wos_sid"),
     )
 
 
