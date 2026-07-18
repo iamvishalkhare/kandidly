@@ -26,7 +26,15 @@ import type {
   TranscriptOut,
 } from './types';
 
-const API_BASE = (import.meta as { env: Record<string, string> }).env.VITE_API_BASE || 'http://localhost:8000';
+// Dev pages served from a non-localhost host (LAN IP, HTTPS tunnel for phone
+// testing) can't reach the laptop's localhost:8000, so they call the API
+// same-origin and let the Vite dev proxy forward /api (see vite.config.ts).
+// Production builds always use the configured absolute base.
+const env = (import.meta as { env: Record<string, string | boolean> }).env;
+const API_BASE =
+  env.DEV && !['localhost', '127.0.0.1'].includes(window.location.hostname)
+    ? ''
+    : (env.VITE_API_BASE as string) || 'http://localhost:8000';
 
 export const api = axios.create({
   baseURL: API_BASE,
