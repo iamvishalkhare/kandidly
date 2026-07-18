@@ -1,5 +1,5 @@
 import { useState, useEffect, lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { ChevronRight } from 'lucide-react';
 import { cn } from './lib/utils';
@@ -151,8 +151,11 @@ function LoginScreen({ intent, returnTo, onPick }: {
 
 function AppInner() {
   const { isLoggedIn } = useAuth();
-  // If not logged in and hitting a console or /apply route, show login screen
-  const path = window.location.pathname;
+  // If not logged in and hitting a console or /apply route, show login screen.
+  // Must come from the router (not window.location) so client-side <Link>
+  // navigations re-evaluate the gate.
+  const location = useLocation();
+  const path = location.pathname;
   const needsAuth = path.startsWith('/apply') || path.startsWith('/console');
 
   const handlePick = (picked: DevUser) => {
@@ -165,7 +168,7 @@ function AppInner() {
     return (
       <LoginScreen
         intent={path.startsWith('/console') ? 'console' : 'candidate'}
-        returnTo={path + window.location.search}
+        returnTo={path + location.search}
         onPick={handlePick}
       />
     );
