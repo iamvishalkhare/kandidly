@@ -26,6 +26,8 @@ on:
           - restart-caddy
           - presign-recording
           - enqueue-scoring
+          - dump-scoring
+          - reset-scoring
       tail:
         description: Log lines to tail
         type: string
@@ -89,6 +91,22 @@ jobs:
             enqueue-scoring)
               [[ "$ARG" =~ ^[0-9a-f-]{36}$ ]] || { echo "arg must be an interview uuid"; exit 1; }
               CMD="$COMPOSE exec -T backend /app/.venv/bin/python -c \"import asyncio; from app.core.queue import enqueue; asyncio.run(enqueue('run_scoring', '$ARG')); print('enqueued run_scoring $ARG')\""
+              ;;
+            # Prints an interview's scoring state (turns, criterion scores with
+            # per-quote verification, evaluations) as JSON — for debugging
+            # evidence-verification failures. Truncated previews of candidate
+            # speech land in the (private-repo) workflow log; same trade-off
+            # already accepted for presign-recording.
+            dump-scoring)
+              [[ "$ARG" =~ ^[0-9a-f-]{36}$ ]] || { echo "arg must be an interview uuid"; exit 1; }
+              CMD="$COMPOSE exec -T -e PYTHONPATH=/app/backend backend /app/.venv/bin/python /app/backend/scripts/dump_scoring.py $ARG"
+              ;;
+            # Wipes scoring artifacts (job + scores + evaluations + report) and
+            # re-runs scoring from scratch — the recovery path after a scoring
+            # fix, where enqueue-scoring would no-op on the 'done' job row.
+            reset-scoring)
+              [[ "$ARG" =~ ^[0-9a-f-]{36}$ ]] || { echo "arg must be an interview uuid"; exit 1; }
+              CMD="$COMPOSE exec -T -e PYTHONPATH=/app/backend backend /app/.venv/bin/python /app/backend/scripts/reset_scoring.py $ARG"
               ;;
             # Generates the token ON the box, rewrites the .env.prod line,
             # recreates the services that read it, then proves auth works by
