@@ -12,8 +12,10 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Literal
 from uuid import UUID
 
+import structlog
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, select
 from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,22 +30,28 @@ from app.db.models import (
     Application,
     AuditLog,
     CatalogEntry,
+    Evaluation,
+    EvidenceNote,
     FormSubmission,
     FormTemplate,
     IdentityCheck,
+    Injection,
     Interview,
     InviteLink,
     Organization,
     ProctoringEvent,
     ProctoringSnapshot,
+    QuestionPlan,
     Report,
     Requisition,
     Rubric,
     RubricCriterion,
+    ScoringJob,
     StoredFile,
     Turn,
     User,
 )
+from app.domain import interview_context
 from app.domain.audit import record_audit
 from app.domain.builder import (
     builder_fields_to_schema,
@@ -64,6 +72,7 @@ from app.schemas.interview_config import InterviewConfig, ProctoringConfig
 
 router = APIRouter(prefix="/api/admin/console", tags=["console"])
 _admin = Depends(require_role("admin", "recruiter"))
+log = structlog.get_logger(__name__)
 
 _COMPLETED_STATES = ("scored", "reviewed")
 
@@ -1206,6 +1215,114 @@ async def get_console_review(
         integrity=integrity,
         review_trail=trail,
     )
+
+
+# Interview deletion is destructive (DB + S3 + Redis) and exercised so far
+# only by one operator testing the fix for the 2026-07-19 stuck-interview
+# incident — deliberately scoped to that one account rather than every
+# admin/recruiter until it's proven safe to open up. Hardcoded per explicit
+# product decision, not a role: every other console user gets a 403 here even
+# though they pass the `_admin` role guard.
+_INTERVIEW_DELETE_ALLOWED_EMAIL = "vishalkhare39@gmail.com"
+
+
+async def _ensure_can_delete_interviews(db: AsyncSession, user: AuthUser) -> None:
+    row = await db.get(User, user.user_id)
+    email = (row.email if row else user.email) or ""
+    if email.lower() != _INTERVIEW_DELETE_ALLOWED_EMAIL:
+        raise AppError("forbidden", "Interview deletion is not available for this account")
+
+
+@router.delete("/interviews/{interview_id}")
+async def delete_console_interview(
+    interview_id: UUID, user: AuthUser = _admin, db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Hard delete an interview's DB rows, S3 objects, and Redis context cache
+    — for clearing out runs corrupted by an infra bug (e.g. the agent never
+    dispatching) so the candidate can attempt again. The owning application
+    drops its interview_id and reverts to 'abandoned' (same direct-set
+    shortcut past transition() that sweep_abandoned / dev_reset use), which
+    clears it from the uq_app_live index so the next claim starts fresh."""
+    await _ensure_can_delete_interviews(db, user)
+    interview = await _get_org_interview(db, interview_id, user)
+
+    snapshot_file_ids = (
+        (
+            await db.execute(
+                select(ProctoringSnapshot.file_id).where(
+                    ProctoringSnapshot.interview_id == interview_id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    report = (
+        await db.execute(select(Report).where(Report.interview_id == interview_id))
+    ).scalar_one_or_none()
+    identity_check = (
+        await db.execute(select(IdentityCheck).where(IdentityCheck.interview_id == interview_id))
+    ).scalar_one_or_none()
+    file_ids = set(snapshot_file_ids)
+    if interview.audio_recording_id:
+        file_ids.add(interview.audio_recording_id)
+    if report and report.html_file_id:
+        file_ids.add(report.html_file_id)
+    if identity_check:
+        file_ids.add(identity_check.reference_file_id)
+
+    # Children first — none of these have ON DELETE CASCADE from interviews.
+    # evidence_notes before turns (FK's to both interviews and turns);
+    # turns/injections before question_plans (their node_id FKs question_plan_nodes,
+    # which cascades from question_plans).
+    await db.execute(sa_delete(EvidenceNote).where(EvidenceNote.interview_id == interview_id))
+    await db.execute(sa_delete(Turn).where(Turn.interview_id == interview_id))
+    await db.execute(sa_delete(Injection).where(Injection.interview_id == interview_id))
+    await db.execute(sa_delete(ProctoringEvent).where(ProctoringEvent.interview_id == interview_id))
+    await db.execute(
+        sa_delete(ProctoringSnapshot).where(ProctoringSnapshot.interview_id == interview_id)
+    )
+    await db.execute(sa_delete(IdentityCheck).where(IdentityCheck.interview_id == interview_id))
+    await db.execute(sa_delete(Evaluation).where(Evaluation.interview_id == interview_id))
+    # ScoringJob -> CriterionScore cascades (ondelete=CASCADE).
+    await db.execute(sa_delete(ScoringJob).where(ScoringJob.interview_id == interview_id))
+    await db.execute(sa_delete(Report).where(Report.interview_id == interview_id))
+    # QuestionPlan -> QuestionPlanNode cascades (ondelete=CASCADE).
+    await db.execute(sa_delete(QuestionPlan).where(QuestionPlan.interview_id == interview_id))
+
+    if file_ids:
+        await db.execute(sa_delete(StoredFile).where(StoredFile.id.in_(file_ids)))
+
+    app = await db.get(Application, interview.application_id)
+    if app:
+        app.interview_id = None  # type: ignore
+        app.state = "abandoned"
+        # autoflush is off (app/db/session.py) — the raw DELETE below must not
+        # race this pending UPDATE, or fk_app_interview blocks it.
+        await db.flush()
+
+    await db.execute(sa_delete(Interview).where(Interview.id == interview_id))
+    await record_audit(
+        db,
+        actor_id=user.user_id,
+        action="interview.deleted",
+        entity_type="interview",
+        entity_id=interview_id,
+    )
+    await db.commit()
+
+    # Best-effort external cleanup after the DB commit succeeds — an orphaned
+    # S3 object or stale cache entry is recoverable; a dangling DB reference
+    # to a deleted row is not.
+    for bucket in (storage.BUCKET_SNAPSHOTS, storage.BUCKET_RECORDINGS, storage.BUCKET_REPORTS):
+        try:
+            for key in await storage.list_keys(bucket, f"{interview_id}/"):
+                await storage.delete_object(bucket, key)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("interview_delete_storage_cleanup_failed", bucket=bucket, error=str(exc))
+    await interview_context.invalidate(interview_id)
+
+    return {"ok": True}
 
 
 @router.get("/interviews/{interview_id}/snapshots", response_model=ProctorFramePageOut)

@@ -119,6 +119,16 @@ async def get_cached_context(interview_id) -> dict | None:
         return None
 
 
+async def invalidate(interview_id) -> None:
+    """Drop the cached bundle — used by the console's interview delete."""
+    try:
+        await cache.delete(_key(interview_id))
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "context_cache_invalidate_failed", interview_id=str(interview_id), error=str(exc)
+        )
+
+
 async def rebuild_context(db: AsyncSession, interview_id) -> dict | None:
     """Reassemble the bundle from Postgres (cache cold-miss path) and re-cache it."""
     interview = await db.get(Interview, interview_id)

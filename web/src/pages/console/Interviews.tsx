@@ -4,11 +4,18 @@
 
 import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { ArrowRight, CalendarClock, Check, ChevronDown, Filter, RotateCcw, Search, SlidersHorizontal } from 'lucide-react';
+import { ArrowRight, CalendarClock, Check, ChevronDown, Filter, RotateCcw, Search, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { getUser } from '../../lib/auth';
+import { useToast } from '../../components/ui';
 import ConsoleLayout from './ConsoleLayout';
 import type { InterviewDecision } from './interviewData';
-import { useConsoleInterviews } from '../../lib/consoleApi';
+import { useConsoleInterviews, useDeleteInterview } from '../../lib/consoleApi';
+
+// Hardcoded on purpose (matches the backend gate, backend/app/api/console.py)
+// — this delete capability is being exercised by one operator in prod before
+// it's considered safe to open up to every console user.
+const INTERVIEW_DELETE_ALLOWED_EMAIL = 'vishalkhare39@gmail.com';
 
 const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
   year: 'numeric',
@@ -220,6 +227,21 @@ function DecisionPill({ decision }: { decision: InterviewDecision }) {
 export default function ConsoleInterviews() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { data: interviews = [], isLoading } = useConsoleInterviews();
+  const { toast } = useToast();
+  const deleteInterview = useDeleteInterview();
+  const canDeleteInterviews =
+    getUser()?.email?.toLowerCase() === INTERVIEW_DELETE_ALLOWED_EMAIL;
+
+  const handleDelete = (id: string, candidateName: string) => {
+    if (deleteInterview.isPending) return;
+    if (!window.confirm(`Permanently delete ${candidateName}'s interview? This removes its recording, transcript, and score, and lets the candidate attempt the invite again. This cannot be undone.`)) {
+      return;
+    }
+    deleteInterview.mutate(id, {
+      onSuccess: () => toast('Interview deleted.', 'success'),
+      onError: () => toast('Deleting the interview failed. Please try again.', 'error'),
+    });
+  };
 
   const requisitionIdFilter = getParam(searchParams, 'requisitionId');
   const requisitionTitleFilter = getParam(searchParams, 'requisitionTitle');
@@ -488,7 +510,24 @@ export default function ConsoleInterviews() {
                 </div>
                 <div className="px-4 py-4 xl:border-l xl:border-outline-variant label-mono text-on-surface-variant tabular flex items-center justify-between gap-3">
                   <span>{dateTimeFormatter.format(new Date(interview.concludedAt))}</span>
-                  <ArrowRight size={16} className="shrink-0 text-text-muted" />
+                  <span className="flex items-center gap-2 shrink-0">
+                    {canDeleteInterviews && (
+                      <button
+                        type="button"
+                        title="Delete this interview"
+                        onClick={e => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleDelete(interview.id, interview.candidateName);
+                        }}
+                        disabled={deleteInterview.isPending}
+                        className="p-1 text-on-surface-variant hover:text-[var(--error)] transition-colors duration-150 disabled:opacity-50"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    )}
+                    <ArrowRight size={16} className="text-text-muted" />
+                  </span>
                 </div>
               </Link>
             ))}

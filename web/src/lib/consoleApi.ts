@@ -396,6 +396,11 @@ export const consoleApi = {
   },
   getInterviews: async (): Promise<ConsoleInterviewWire[]> =>
     (await api.get<ConsoleInterviewWire[]>('/api/admin/console/interviews')).data,
+  /** Hard delete: DB rows + S3 objects + Redis cache. 403s for every account
+   * except the one this is currently gated to (backend/app/api/console.py). */
+  deleteInterview: async (id: string): Promise<void> => {
+    await api.delete(`/api/admin/console/interviews/${id}`);
+  },
   getReview: async (id: string): Promise<ConsoleReviewWire> =>
     (await api.get<ConsoleReviewWire>(`/api/admin/console/interviews/${id}`)).data,
   getSnapshots: async (id: string, offset: number, limit: number): Promise<ProctorFramePageWire> =>
@@ -522,4 +527,15 @@ export function useReviewDecision(interviewId: string | undefined) {
 
 export function useConsoleDashboard() {
   return useQuery({ queryKey: ['console', 'dashboard'], queryFn: consoleApi.getDashboard });
+}
+
+export function useDeleteInterview() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => consoleApi.deleteInterview(id),
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['console', 'interviews'] });
+      queryClient.invalidateQueries({ queryKey: ['console', 'dashboard'] });
+    },
+  });
 }

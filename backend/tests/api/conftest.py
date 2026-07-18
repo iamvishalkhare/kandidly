@@ -218,14 +218,27 @@ def jobs(monkeypatch):
 @pytest.fixture
 def stub_object_storage(monkeypatch):
     """CI has no reachable S3 (KANDIDLY_S3_ENDPOINT is deliberately dead), so
-    stub the object write the selfie upload makes — preflight only checks the
-    stored_files row, which the endpoint still creates."""
+    stub the object store with an in-memory fake. Most tests only need the
+    put_object no-op (preflight checks just the stored_files row), but
+    interview deletion's S3 cleanup needs list_keys/delete_object to actually
+    reflect what was written — returns the fake bucket dict for assertions."""
     from app.core import storage
 
-    async def _noop_put(bucket: str, key: str, body: bytes, content_type: str) -> None:
-        return None
+    objects: dict[tuple[str, str], bytes] = {}
 
-    monkeypatch.setattr(storage, "put_object", _noop_put)
+    async def _fake_put(bucket: str, key: str, body: bytes, content_type: str) -> None:
+        objects[(bucket, key)] = body
+
+    async def _fake_list_keys(bucket: str, prefix: str) -> list[str]:
+        return [key for (b, key) in objects if b == bucket and key.startswith(prefix)]
+
+    async def _fake_delete(bucket: str, key: str) -> None:
+        objects.pop((bucket, key), None)
+
+    monkeypatch.setattr(storage, "put_object", _fake_put)
+    monkeypatch.setattr(storage, "list_keys", _fake_list_keys)
+    monkeypatch.setattr(storage, "delete_object", _fake_delete)
+    return objects
 
 
 @pytest.fixture
