@@ -6,7 +6,6 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.captcha import require_captcha
 from app.core.config import settings
 from app.core.deps import get_db
 from app.core.ratelimit import rate_limit
@@ -107,14 +106,11 @@ async def dev_reset(body: dict, db: AsyncSession = Depends(get_db)) -> dict:
 @router.get(
     "/i/{token}",
     response_model=LinkResolveOut,
-    # reCAPTCHA v3 on top of the IP rate limit: the landing page is the one
-    # URL strangers hold in bulk (mass-mailed invite links), and every resolve
-    # is a DB read + click_count write — gate it against bot floods the same
-    # way form/submit is gated. Fails open when no secret is configured (dev).
-    dependencies=[
-        rate_limit("link_resolve", 60, by="ip"),
-        require_captcha("link_resolve", min_score_setting="recaptcha_min_score_landing"),
-    ],
+    # Deliberately NO captcha here (tried 2026-07-18, removed same day): v3
+    # scores cold first-visit landing loads so low that real candidates were
+    # blocked before seeing the page. The IP rate limit is the flood control;
+    # the costly step (form/submit) keeps its captcha gate.
+    dependencies=[rate_limit("link_resolve", 60, by="ip")],
 )
 async def resolve_link(token: str, db: AsyncSession = Depends(get_db)) -> LinkResolveOut:
     """Link resolution for the landing page — never 404s (SPEC §13.2.1)."""
