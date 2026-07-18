@@ -89,6 +89,13 @@ services:
       # (SignatureDoesNotMatch, 2026-07-17). Overrides any env_file value.
       KANDIDLY_S3_ACCESS_KEY: ${MINIO_ROOT_USER:-}
       KANDIDLY_S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-}
+      # Named LiveKit agent dispatch — dev and prod share one LiveKit Cloud
+      # project, and unnamed workers (automatic dispatch) round-robin jobs
+      # across envs: a running dev laptop stack stole prod interview jobs and
+      # 404'd them against its dev DB (2026-07-19 incident). The backend
+      # embeds this name in candidate room tokens; must match the agent
+      # service's value below.
+      KANDIDLY_LIVEKIT_AGENT_NAME: kandidly-prod
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz"]
       interval: 10s
@@ -135,6 +142,10 @@ services:
       # itself, so every bootstrap/turn/status write failed and interviews
       # never reached status=live (2026-07-17 incident).
       KANDIDLY_BACKEND_URL: http://backend:8000
+      # Must match the backend's KANDIDLY_LIVEKIT_AGENT_NAME (see comment
+      # there) — this worker only receives jobs for rooms whose candidate
+      # token dispatches this exact name.
+      KANDIDLY_LIVEKIT_AGENT_NAME: kandidly-prod
     depends_on:
       redis:
         condition: service_healthy

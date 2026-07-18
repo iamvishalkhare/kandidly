@@ -14,6 +14,11 @@ class AgentConfig:
     livekit_url = os.environ.get("KANDIDLY_LIVEKIT_URL", "")
     livekit_api_key = os.environ.get("KANDIDLY_LIVEKIT_API_KEY", "")
     livekit_api_secret = os.environ.get("KANDIDLY_LIVEKIT_API_SECRET", "")
+    # Explicit named dispatch — dev and prod share one LiveKit project, so an
+    # unnamed worker (automatic dispatch) steals the other env's interview
+    # jobs. Must match the backend's KANDIDLY_LIVEKIT_AGENT_NAME (it embeds
+    # this name in the candidate's room token).
+    livekit_agent_name = os.environ.get("KANDIDLY_LIVEKIT_AGENT_NAME", "kandidly-dev")
 
     deepgram_api_key = os.environ.get("KANDIDLY_DEEPGRAM_API_KEY", "")
     cartesia_api_key = os.environ.get("KANDIDLY_CARTESIA_API_KEY", "")

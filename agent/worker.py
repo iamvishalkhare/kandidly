@@ -323,12 +323,15 @@ def main() -> None:
     log.info(
         "agent_worker_boot",
         livekit_url=config.livekit_url or "(unset)",
+        agent_name=config.livekit_agent_name,
         stt=STT_MODEL,
         llm=LLM_MODEL,
         tts=TTS_MODEL,
     )
     # ws_url/api_key/api_secret are read from the LIVEKIT_* env exported above.
-    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint))
+    # agent_name switches this worker to explicit dispatch: it only gets jobs
+    # for rooms whose candidate token names it (config.py explains why).
+    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint, agent_name=config.livekit_agent_name))
 
 
 if __name__ == "__main__":

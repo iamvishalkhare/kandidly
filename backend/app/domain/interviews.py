@@ -78,7 +78,9 @@ def mint_candidate_token(room_name: str, application_id: UUID) -> str:
 
     [VERIFY-DOC] LiveKit AccessToken/VideoGrants API. Identity is
     `cand-{application_id}`; grants: join room, publish mic+camera, subscribe,
-    data. 2h TTL (SPEC §16.6)."""
+    data. 2h TTL (SPEC §16.6). The room config dispatches this env's named
+    agent — see settings.livekit_agent_name for why automatic dispatch is
+    unusable (dev and prod workers share one LiveKit project)."""
     try:
         from livekit import api  # type: ignore
 
@@ -92,6 +94,11 @@ def mint_candidate_token(room_name: str, application_id: UUID) -> str:
                     can_publish=True,
                     can_subscribe=True,
                     can_publish_data=True,
+                )
+            )
+            .with_room_config(
+                api.RoomConfiguration(
+                    agents=[api.RoomAgentDispatch(agent_name=settings.livekit_agent_name)]
                 )
             )
             .with_ttl(_timedelta_hours(2))

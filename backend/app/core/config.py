@@ -86,6 +86,15 @@ class Settings(BaseSettings):
     livekit_url: str = ""
     livekit_api_key: str = ""
     livekit_api_secret: str = ""
+    # Named agent dispatch. Dev and prod share one LiveKit Cloud project, and
+    # automatic dispatch (agent_name="") round-robins jobs across EVERY
+    # registered worker — a running dev stack steals prod interviews (2026-07-19
+    # incident: laptop agent accepted the prod room, 404'd against its dev DB,
+    # prod interview never went live). Each env registers its agent under this
+    # name and the candidate token dispatches only that name. Must match the
+    # agent's KANDIDLY_LIVEKIT_AGENT_NAME (compose.prod.yml sets both to
+    # kandidly-prod).
+    livekit_agent_name: str = "kandidly-dev"
 
     # providers
     deepgram_api_key: str = ""
