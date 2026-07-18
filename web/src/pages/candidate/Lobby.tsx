@@ -2,7 +2,8 @@
  * /apply/:applicationId/lobby — 3-step pre-interview flow.
  * Step 1: Consent (scroll text + 2 checkboxes)
  * Step 2: Devices (explicit mic/camera permission buttons + device pickers;
- *         camera + verification selfie only when proctoring is enabled)
+ *         the verification selfie is always required — the proctoring toggle
+ *         only controls the periodic snapshot loop during the interview)
  * Step 3: Ready (what to expect + Join button)
  *
  * Device choices persist via lib/devicePrefs.ts; the interview room publishes
@@ -185,7 +186,7 @@ function DevicesStep({
   const [micDevices, setMicDevices] = useState<MediaDeviceInfo[]>([]);
   const [micId, setMicId] = useState('');
 
-  // Camera + verification selfie (proctoring only)
+  // Camera + verification selfie (always required)
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const camStreamRef = useRef<MediaStream | null>(null);
@@ -327,7 +328,9 @@ function DevicesStep({
 
   const micBadge = permBadge(micState);
   const camBadge = permBadge(camState);
-  const canContinue = micState === 'granted' && (!proctoringEnabled || captured);
+  // The verification selfie is always required, whatever the proctoring
+  // setting — it identifies the candidate on the review page.
+  const canContinue = micState === 'granted' && captured;
   const blocker =
     micState !== 'granted'
       ? 'Enable your microphone to continue.'
@@ -344,8 +347,8 @@ function DevicesStep({
         <p className="text-sm mt-1" style={{ color: 'var(--text-muted)' }}>
           Grant access and pick which devices to use.
           {proctoringEnabled
-            ? ' The interview is voice-first; the camera takes periodic verification snapshots.'
-            : ' The interview is voice-only.'}
+            ? ' The interview is voice-first; the camera takes a verification photo now and periodic snapshots during the interview.'
+            : ' The interview is voice-first; the camera is used once for your verification photo.'}
         </p>
       </div>
 
@@ -398,77 +401,78 @@ function DevicesStep({
         </div>
       </section>
 
-      {/* Camera — only when the requisition has proctoring on */}
-      {proctoringEnabled && (
-        <section className="border" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
-          <header className="flex items-center justify-between px-4 py-3 border-b">
-            <span className="flex items-center gap-2 label-mono" style={{ color: 'var(--text-secondary)' }}>
-              <Video size={14} />
-              Camera
-            </span>
-            <Badge color={camBadge.color}>{camBadge.label}</Badge>
-          </header>
-          <div className="p-4 space-y-4">
-            {camState === 'granted' ? (
-              <>
-                <div className="relative overflow-hidden aspect-video bg-black border">
-                  <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
-                  {captured && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-black/50">
-                      <div className="text-center space-y-2">
-                        <CheckCircle2 size={32} className="mx-auto" style={{ color: 'var(--emerald-chip-text)' }} />
-                        <p className="text-sm text-white font-medium">Photo captured</p>
-                      </div>
+      {/* Camera — always shown: the verification selfie is required whatever
+          the proctoring setting */}
+      <section className="border" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
+        <header className="flex items-center justify-between px-4 py-3 border-b">
+          <span className="flex items-center gap-2 label-mono" style={{ color: 'var(--text-secondary)' }}>
+            <Video size={14} />
+            Camera
+          </span>
+          <Badge color={camBadge.color}>{camBadge.label}</Badge>
+        </header>
+        <div className="p-4 space-y-4">
+          {camState === 'granted' ? (
+            <>
+              <div className="relative overflow-hidden aspect-video bg-black border">
+                <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
+                {captured && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+                    <div className="text-center space-y-2">
+                      <CheckCircle2 size={32} className="mx-auto" style={{ color: 'var(--emerald-chip-text)' }} />
+                      <p className="text-sm text-white font-medium">Photo captured</p>
                     </div>
-                  )}
-                </div>
-                <Select
-                  label="Camera"
-                  value={camId}
-                  onChange={e => {
-                    void enableCam(e.target.value);
-                  }}
-                  options={camDevices.map((d, i) => ({
-                    value: d.deviceId,
-                    label: d.label || `Camera ${i + 1}`,
-                  }))}
-                />
-                {uploadError && (
-                  <p className="text-xs" style={{ color: 'var(--amber-chip-text)' }}>
-                    Couldn't upload your photo. Please try taking it again.
-                  </p>
+                  </div>
                 )}
-                <Button
-                  variant={captured ? 'outline' : 'primary'}
-                  size="lg"
-                  className="w-full"
-                  loading={uploading}
-                  onClick={capture}
-                >
-                  {captured ? 'Retake photo' : 'Take verification photo'}
-                </Button>
-              </>
-            ) : (
-              <>
-                <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-                  {camState === 'denied'
-                    ? 'Camera access is blocked. Allow it in your browser settings (the camera/mic icon near the address bar), then try again.'
-                    : 'A verification photo is required for this interview, and the camera stays on for periodic snapshots.'}
+              </div>
+              <Select
+                label="Camera"
+                value={camId}
+                onChange={e => {
+                  void enableCam(e.target.value);
+                }}
+                options={camDevices.map((d, i) => ({
+                  value: d.deviceId,
+                  label: d.label || `Camera ${i + 1}`,
+                }))}
+              />
+              {uploadError && (
+                <p className="text-xs" style={{ color: 'var(--amber-chip-text)' }}>
+                  Couldn't upload your photo. Please try taking it again.
                 </p>
-                <Button
-                  variant={camState === 'denied' ? 'outline' : 'primary'}
-                  size="lg"
-                  className="w-full"
-                  loading={camState === 'requesting'}
-                  onClick={() => void enableCam()}
-                >
-                  {camState === 'denied' ? 'Try again' : 'Enable camera'}
-                </Button>
-              </>
-            )}
-          </div>
-        </section>
-      )}
+              )}
+              <Button
+                variant={captured ? 'outline' : 'primary'}
+                size="lg"
+                className="w-full"
+                loading={uploading}
+                onClick={capture}
+              >
+                {captured ? 'Retake photo' : 'Take verification photo'}
+              </Button>
+            </>
+          ) : (
+            <>
+              <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                {camState === 'denied'
+                  ? 'Camera access is blocked. Allow it in your browser settings (the camera/mic icon near the address bar), then try again.'
+                  : proctoringEnabled
+                    ? 'A verification photo is required for this interview, and the camera stays on for periodic snapshots.'
+                    : 'A verification photo is required for this interview. The camera is used only for this photo.'}
+              </p>
+              <Button
+                variant={camState === 'denied' ? 'outline' : 'primary'}
+                size="lg"
+                className="w-full"
+                loading={camState === 'requesting'}
+                onClick={() => void enableCam()}
+              >
+                {camState === 'denied' ? 'Try again' : 'Enable camera'}
+              </Button>
+            </>
+          )}
+        </div>
+      </section>
 
       <canvas ref={canvasRef} className="hidden" />
 
@@ -489,9 +493,11 @@ function DevicesStep({
 
 function ReadyStep({
   applicationId,
+  durationMinutes,
   onJoinSuccess,
 }: {
   applicationId: string;
+  durationMinutes: number;
   onJoinSuccess: (join: JoinOut) => void;
 }) {
   const [polling, setPolling] = useState(false);
@@ -586,7 +592,7 @@ function ReadyStep({
         style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
       >
         {[
-          { icon: '⏱', text: 'The interview is up to 30 minutes long.' },
+          { icon: '⏱', text: `The interview is up to ${durationMinutes} minutes long.` },
           { icon: '🎙', text: 'Speak clearly. The AI conducts the interview through your microphone.' },
           { icon: '🔄', text: 'Follow-up questions are normal — answer as thoroughly as you can.' },
           { icon: '🔁', text: 'You may rejoin once if disconnected.' },
@@ -638,8 +644,8 @@ export default function CandidateLobby() {
     enabled: !!applicationId,
   });
 
-  // The camera half of the devices step (and the selfie requirement) exists
-  // only when the requisition has proctoring on (mirrors preflight_join).
+  // The verification selfie is always required (mirrors preflight_join);
+  // proctoring only changes the consent copy and the monitoring checkbox.
   const proctoringEnabled = app?.proctoring_enabled !== false;
   const steps = ['Consent', 'Devices', 'Ready'];
   const readyStep = steps.length - 1;
@@ -684,6 +690,7 @@ export default function CandidateLobby() {
       {step === readyStep && (
         <ReadyStep
           applicationId={applicationId!}
+          durationMinutes={app?.duration_minutes ?? 30}
           onJoinSuccess={join => {
             // Hand the LiveKit credentials to the interview room via router
             // state so it can connect without a second /join round-trip.

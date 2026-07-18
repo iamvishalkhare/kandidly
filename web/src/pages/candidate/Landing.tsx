@@ -242,7 +242,7 @@ export default function CandidateLanding() {
           <ul className="space-y-2">
             {[
               'Fill in a short application form',
-              'Complete a 30-minute AI voice interview',
+              `Complete a ${link.duration_minutes ?? 30}-minute AI voice interview`,
               'We\'ll notify you with next steps',
             ].map((item, i) => (
               <li key={i} className="flex items-start gap-2 text-sm" style={{ color: 'var(--text-muted)' }}>

@@ -61,7 +61,8 @@ def auth(token: str) -> dict[str, str]:
 
 def builder_payload(*, deploy: bool = True, title: str | None = None, **overrides) -> dict:
     """A valid console builder payload (ConsoleRequisitionIn). Proctoring is
-    off by default so join preflight doesn't demand a verification selfie."""
+    off by default; note the verification selfie is required for join preflight
+    regardless (tests upload one via _upload_selfie)."""
     body = {
         "title": title or f"API Test Engineer {uuid.uuid4().hex[:8]}",
         "domain": "Engineering",
@@ -210,6 +211,19 @@ def jobs(monkeypatch):
     monkeypatch.setattr(candidate_api, "enqueue", _record)
     monkeypatch.setattr(internal_api, "enqueue", _record)
     return calls
+
+
+@pytest.fixture
+def stub_object_storage(monkeypatch):
+    """CI has no reachable S3 (KANDIDLY_S3_ENDPOINT is deliberately dead), so
+    stub the object write the selfie upload makes — preflight only checks the
+    stored_files row, which the endpoint still creates."""
+    from app.core import storage
+
+    async def _noop_put(bucket: str, key: str, body: bytes, content_type: str) -> None:
+        return None
+
+    monkeypatch.setattr(storage, "put_object", _noop_put)
 
 
 @pytest.fixture

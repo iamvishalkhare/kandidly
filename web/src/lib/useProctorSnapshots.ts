@@ -17,6 +17,11 @@ const MAX_CONSECUTIVE_FAILURES = 10;
 
 export interface SnapshotLoop {
   stop(): void;
+  /** Switch the capture camera mid-interview. Keeps the current stream when
+   * the new device can't be opened. Resolves true on success. */
+  setDevice(deviceId: string): Promise<boolean>;
+  /** deviceId of the camera currently capturing, if any. */
+  getDeviceId(): string | null;
 }
 
 export function startSnapshotLoop(
@@ -27,6 +32,7 @@ export function startSnapshotLoop(
   let timer: ReturnType<typeof setTimeout> | null = null;
   let stream: MediaStream | null = null;
   let consecutiveFailures = 0;
+  let looping = false; // whether the capture/schedule cycle has started
 
   const video = document.createElement('video');
   video.muted = true;
@@ -40,8 +46,35 @@ export function startSnapshotLoop(
     video.srcObject = null;
   };
 
+  const setDevice = async (deviceId: string): Promise<boolean> => {
+    if (stopped) return false;
+    try {
+      // `exact` — an explicit mid-interview pick must actually switch, not
+      // let the browser silently fall back to the current camera.
+      const next = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 640 }, deviceId: { exact: deviceId } },
+        audio: false,
+      });
+      if (stopped) {
+        next.getTracks().forEach(t => t.stop());
+        return false;
+      }
+      stream?.getTracks().forEach(t => t.stop());
+      stream = next;
+      video.srcObject = next;
+      await video.play();
+      // Recovery path: if the initial camera was denied, the capture cycle
+      // never started — kick it off now that a camera works.
+      if (!looping) schedule();
+      return true;
+    } catch {
+      return false; // keep capturing from the previous camera
+    }
+  };
+
   const schedule = () => {
     if (stopped) return;
+    looping = true;
     timer = setTimeout(() => void capture(), Math.max(1, opts.intervalS) * 1000);
   };
 
@@ -106,5 +139,8 @@ export function startSnapshotLoop(
     }
   })();
 
-  return { stop };
+  const getDeviceId = () =>
+    stream?.getVideoTracks()[0]?.getSettings().deviceId ?? null;
+
+  return { stop, setDevice, getDeviceId };
 }

@@ -12,6 +12,7 @@ from app.core.ratelimit import rate_limit
 from app.db.models import InviteLink, Requisition
 from app.domain.links import resolve
 from app.schemas.api import ConfigOut, LinkResolveOut
+from app.schemas.interview_config import InterviewConfig
 
 router = APIRouter(prefix="/api/public", tags=["public"])
 
@@ -124,9 +125,15 @@ async def resolve_link(token: str, db: AsyncSession = Depends(get_db)) -> LinkRe
         link.click_count = (link.click_count or 0) + 1
 
     res = resolve(link, requisition)
+    duration_minutes = None
+    if requisition is not None:
+        duration_minutes = (
+            InterviewConfig(**(requisition.interview_config or {})).max_duration_seconds // 60
+        )
     return LinkResolveOut(
         title=requisition.title if requisition else None,
         interview_type=requisition.interview_type if requisition else None,
+        duration_minutes=duration_minutes,
         status_ok=res.status_ok,
         reason=res.reason,
     )

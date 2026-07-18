@@ -116,6 +116,7 @@ export interface ConsoleReviewWire extends ConsoleInterviewWire {
   comparison_scores: number[];
   audio_url: string | null;
   waveform: { peaks: number[]; bins: number; duration_seconds: number } | null;
+  selfie_url: string | null;
   transcript: { id: string; seconds: number; speaker: string; text: string }[];
   rubric: { key: string; label: string; weight: number; score: number; summary: string; reasoning: string }[];
   integrity: {
@@ -339,6 +340,7 @@ export function toReview(wire: ConsoleReviewWire): ReviewData {
     rubric,
     waveformPeaks: wire.waveform?.peaks ?? null,
     audioDurationSeconds: wire.waveform?.duration_seconds ?? null,
+    selfieUrl: wire.selfie_url,
     reviewDecision: toDecision(wire.review_decision),
     reviewTrail: wire.review_trail.map(t => ({ ...t })),
   };

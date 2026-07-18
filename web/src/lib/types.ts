@@ -12,6 +12,8 @@ export interface ConfigOut {
 export interface LinkResolveOut {
   title: string | null;
   interview_type: string | null;
+  // Configured interview length in minutes (real value, not a generic 30).
+  duration_minutes: number | null;
   status_ok: boolean;
   reason: string | null;
 }
@@ -31,9 +33,11 @@ export interface ApplicationOut {
   template_schema: FormSchema | null;
   answers: Record<string, unknown> | null;
   resume_parse_status: string | null;
-  // Per-requisition proctoring toggle — the lobby skips the camera/selfie
-  // step (and its permission prompt) when false.
+  // Per-requisition proctoring toggle — controls the periodic snapshot loop
+  // during the interview (the lobby's verification selfie is always required).
   proctoring_enabled?: boolean;
+  // Configured interview length, for candidate-facing "up to N minutes" copy.
+  duration_minutes?: number;
 }
 
 export interface FormSchema {

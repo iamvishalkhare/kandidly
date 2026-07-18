@@ -77,6 +77,8 @@ export interface InterviewReview extends InterviewRecord {
   /** Real recording peaks (0–100 ints) + duration when a recording exists. */
   waveformPeaks?: number[] | null;
   audioDurationSeconds?: number | null;
+  /** Presigned URL of the lobby verification selfie, when one was captured. */
+  selfieUrl?: string | null;
 }
 
 const MOCK_AUDIO_SRC = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';

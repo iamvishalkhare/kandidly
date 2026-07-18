@@ -276,6 +276,9 @@ class ConsoleReviewOut(ConsoleInterviewOut):
     comparison_scores: list[float] = []
     audio_url: str | None = None
     waveform: dict | None = None
+    # Presigned URL of the candidate's verification selfie (taken in the lobby
+    # device check, independent of the proctoring toggle).
+    selfie_url: str | None = None
     transcript: list[TranscriptTurnOut] = []
     rubric: list[RubricAssessmentOut] = []
     # Proctor frames are paginated separately (GET …/{id}/snapshots).
@@ -974,6 +977,20 @@ async def get_console_review(
         if f is not None:
             audio_url = await storage.presign_get(f.bucket, f.key, public=True)
 
+    # Verification selfie from the lobby device check (fixed per-application key).
+    selfie_url: str | None = None
+    if app is not None:
+        selfie_file = (
+            await db.execute(
+                select(StoredFile).where(
+                    StoredFile.bucket == storage.BUCKET_SELFIES,
+                    StoredFile.key == storage.selfie_key(app.id),
+                )
+            )
+        ).scalar_one_or_none()
+        if selfie_file is not None:
+            selfie_url = await storage.presign_get(selfie_file.bucket, selfie_file.key, public=True)
+
     # Integrity aggregation over the full snapshot set (the filmstrip itself
     # is served paginated by console_review_snapshots).
     snap_rows = (
@@ -1064,6 +1081,7 @@ async def get_console_review(
         comparison_scores=comparison,
         audio_url=audio_url,
         waveform=interview.audio_waveform,
+        selfie_url=selfie_url,
         transcript=transcript,
         rubric=rubric_rows,
         integrity=integrity,

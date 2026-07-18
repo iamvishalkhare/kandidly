@@ -55,6 +55,17 @@ async def _state(client, app_id: str, headers) -> str:
     return r.json()["state"]
 
 
+async def _upload_selfie(client, app_id: str, headers) -> None:
+    """The verification selfie is required before every first join, regardless
+    of the requisition's proctoring toggle."""
+    r = await client.post(
+        f"/api/candidate/applications/{app_id}/selfie",
+        files={"image": ("selfie.webp", b"not-a-real-webp", "image/webp")},
+        headers=headers,
+    )
+    assert r.status_code == 200, r.text
+
+
 async def test_full_lifecycle_to_completed(
     client,
     admin_headers,
@@ -63,6 +74,7 @@ async def test_full_lifecycle_to_completed(
     high_requisition_cap,
     jobs,
     livekit_creds,
+    stub_object_storage,
 ):
     app_id, interview_id = await _submitted_application(client, admin_headers, candidate_headers)
 
@@ -81,6 +93,14 @@ async def test_full_lifecycle_to_completed(
     assert r.json()["code"] == "not_ready"
 
     await _insert_ready_plan(interview_id)
+
+    # plan ready but no verification selfie yet → still 202 (selfie is
+    # required even with proctoring off)
+    r = await client.post(f"/api/candidate/applications/{app_id}/join", headers=candidate_headers)
+    assert r.status_code == 202
+    await _upload_selfie(client, app_id, candidate_headers)
+    # retake: same fixed key must update, not violate the (bucket, key) unique
+    await _upload_selfie(client, app_id, candidate_headers)
 
     # join → token minted, app → in_interview, interview created → lobby
     r = await client.post(f"/api/candidate/applications/{app_id}/join", headers=candidate_headers)
@@ -152,6 +172,7 @@ async def test_abandoned_end_reason_mirrors_application(
     high_requisition_cap,
     jobs,
     livekit_creds,
+    stub_object_storage,
 ):
     app_id, interview_id = await _submitted_application(client, admin_headers, candidate_headers)
     await client.post(
@@ -160,6 +181,7 @@ async def test_abandoned_end_reason_mirrors_application(
         headers=candidate_headers,
     )
     await _insert_ready_plan(interview_id)
+    await _upload_selfie(client, app_id, candidate_headers)
     assert (
         await client.post(f"/api/candidate/applications/{app_id}/join", headers=candidate_headers)
     ).status_code == 200

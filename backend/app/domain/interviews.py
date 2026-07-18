@@ -15,11 +15,9 @@ from app.db.models import (
     Consent,
     Interview,
     QuestionPlan,
-    Requisition,
     StoredFile,
 )
 from app.domain import applications as apps
-from app.domain.proctoring import config_for as proctoring_config
 from app.domain.states import assert_interview_transition
 
 
@@ -49,21 +47,19 @@ async def preflight_join(db: AsyncSession, app: Application) -> tuple[bool, dict
     if consent is None:
         raise AppError("not_ready", "Consent required before joining")
 
-    # Verification selfie is a proctoring feature: only required when the
-    # requisition's proctoring toggle (and its identity check) is on.
-    requisition = await db.get(Requisition, app.requisition_id)
-    cfg = proctoring_config(requisition.interview_config if requisition else None)
-    if cfg.enabled and cfg.identity_check:
-        selfie = (
-            await db.execute(
-                select(StoredFile).where(
-                    StoredFile.bucket == "kandidly-selfies",
-                    StoredFile.key == f"{app.id}/reference.webp",
-                )
+    # Verification selfie is always required — it identifies the candidate on
+    # the review page. The proctoring toggle only governs the periodic
+    # snapshot loop during the interview, not this one-time photo.
+    selfie = (
+        await db.execute(
+            select(StoredFile).where(
+                StoredFile.bucket == "kandidly-selfies",
+                StoredFile.key == f"{app.id}/reference.webp",
             )
-        ).scalar_one_or_none()
-        if selfie is None:
-            raise AppError("not_ready", "Verification photo required before joining")
+        )
+    ).scalar_one_or_none()
+    if selfie is None:
+        raise AppError("not_ready", "Verification photo required before joining")
 
     # TODO(spec-gap): agent-pool saturation → 202 {"code":"queued","position":n}.
     # Requires live-count from Redis (SPEC §9.1); returns available in v1 skeleton.
