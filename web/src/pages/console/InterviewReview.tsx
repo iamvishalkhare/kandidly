@@ -12,11 +12,14 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
+  ClipboardList,
   Clock3,
   Copy,
   Download,
+  ExternalLink,
   FileText,
   Gauge,
+  Eye,
   Pause,
   Play,
   RotateCcw,
@@ -36,6 +39,7 @@ import type {
   IntegritySummary,
   IntegrityVerdict,
   ProctorFrame,
+  ScreeningAnswer,
   TranscriptTurn,
 } from './interviewData';
 import {
@@ -900,6 +904,129 @@ function ProctorRoll({ interview }: { interview: InterviewReviewData }) {
   );
 }
 
+function ScreeningResponses({ interview }: { interview: InterviewReviewData }) {
+  const responses = interview.screeningAnswers ?? [];
+  const answeredCount = responses.filter(response => response.answered).length;
+  const [previewFile, setPreviewFile] = useState<ScreeningAnswer | null>(null);
+  const isPdf =
+    previewFile?.fileMime === 'application/pdf' ||
+    previewFile?.fileName?.toLowerCase().endsWith('.pdf');
+
+  return (
+    <section className="border border-outline-variant bg-surface">
+      <div className="border-b border-outline-variant px-4 py-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 min-w-0">
+          <ClipboardList size={16} className="shrink-0 text-primary-fixed-dim" />
+          <h2 className="label-mono text-on-surface">Screening Form</h2>
+        </div>
+        {responses.length > 0 && (
+          <span className="shrink-0 border border-outline-variant px-2 py-1 label-mono text-on-surface-variant">
+            {answeredCount}/{responses.length} answered
+          </span>
+        )}
+      </div>
+      {responses.length > 0 ? (
+        <div className="divide-y divide-outline-variant">
+          {responses.map((response, index) => (
+            <div
+              key={response.key}
+              className="grid grid-cols-1 lg:grid-cols-[minmax(180px,0.38fr)_1fr] gap-4 px-4 py-4"
+            >
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="label-mono text-primary-fixed-dim">
+                    Q{String(index + 1).padStart(2, '0')}
+                  </span>
+                  <span
+                    className={cn(
+                      'border px-2 py-0.5 label-mono',
+                      response.required
+                        ? 'border-primary-container text-primary-fixed-dim'
+                        : 'border-outline-variant text-on-surface-variant',
+                    )}
+                  >
+                    {response.required ? 'Required' : 'Optional'}
+                  </span>
+                </div>
+                <p className="mt-2 font-medium text-on-surface break-words">{response.label}</p>
+              </div>
+              <div
+                className={cn(
+                  'min-h-[56px] border px-3 py-2 text-sm leading-6 whitespace-pre-wrap break-words',
+                  response.answered
+                    ? 'border-outline-variant bg-surface-container-lowest text-on-surface'
+                    : 'border-outline-variant bg-surface text-on-surface-variant',
+                )}
+              >
+                {response.fieldType === 'file' && response.answered ? (
+                  <button
+                    type="button"
+                    onClick={() => setPreviewFile(response)}
+                    disabled={!response.fileUrl}
+                    className="inline-flex max-w-full items-center gap-2 border border-outline-variant px-3 py-1.5 label-mono text-primary-fixed-dim hover:border-primary-container hover:text-on-surface transition-colors duration-150 disabled:cursor-not-allowed disabled:text-on-surface-variant disabled:opacity-70"
+                  >
+                    <Eye size={14} className="shrink-0" />
+                    <span className="truncate">
+                      {response.fileName ?? response.answer ?? 'View file'}
+                    </span>
+                  </button>
+                ) : (
+                  response.answer ?? 'Not answered'
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="p-8 text-center label-mono text-on-surface-variant">
+          No screening responses were captured for this interview.
+        </div>
+      )}
+      <Modal
+        open={!!previewFile}
+        onClose={() => setPreviewFile(null)}
+        title={previewFile?.fileName ?? previewFile?.label ?? 'Uploaded file'}
+        size="xl"
+      >
+        {previewFile?.fileUrl ? (
+          <div className="space-y-4">
+            {isPdf ? (
+              <iframe
+                src={previewFile.fileUrl}
+                title={previewFile.fileName ?? previewFile.label}
+                className="h-[70vh] w-full border border-outline-variant bg-surface-container-lowest"
+              />
+            ) : (
+              <div className="border border-outline-variant bg-surface-container-lowest p-8 text-center">
+                <FileText size={32} className="mx-auto text-primary-fixed-dim" />
+                <p className="mt-3 font-medium text-on-surface">
+                  {previewFile.fileName ?? 'Uploaded document'}
+                </p>
+                <p className="mt-2 text-sm text-on-surface-variant">
+                  This file type opens in the browser or your document viewer.
+                </p>
+              </div>
+            )}
+            <a
+              href={previewFile.fileUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-2 border border-outline-variant px-3 py-1.5 label-mono text-primary-fixed-dim hover:border-primary-container hover:text-on-surface transition-colors duration-150"
+            >
+              <ExternalLink size={14} />
+              Open file
+            </a>
+          </div>
+        ) : (
+          <div className="p-8 text-center label-mono text-on-surface-variant">
+            File preview is unavailable. Refresh the page to request a new file link.
+          </div>
+        )}
+      </Modal>
+    </section>
+  );
+}
+
 function RubricAssessment({ interview }: { interview: InterviewReviewData }) {
   return (
     <section className="border border-outline-variant bg-surface">
@@ -1124,6 +1251,7 @@ export default function InterviewReview() {
               onJump={jumpToTranscript}
               transcriptRefs={transcriptRefs}
             />
+            <ScreeningResponses interview={interview} />
             <RubricAssessment interview={interview} />
           </div>
           <div className="space-y-4 2xl:sticky 2xl:top-24 self-start">

@@ -7,6 +7,7 @@ Builder payload ↔ template/rubric mapping is pure logic in app.domain.builder.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, date, datetime, timedelta
 from typing import Literal
 from uuid import UUID
@@ -27,6 +28,7 @@ from app.db.models import (
     Application,
     AuditLog,
     CatalogEntry,
+    FormSubmission,
     FormTemplate,
     IdentityCheck,
     Interview,
@@ -193,6 +195,18 @@ class RubricAssessmentOut(BaseModel):
     reasoning: str
 
 
+class ScreeningAnswerOut(BaseModel):
+    key: str
+    label: str
+    field_type: str
+    required: bool = False
+    answered: bool = False
+    answer: str | None = None
+    file_url: str | None = None
+    file_mime: str | None = None
+    file_name: str | None = None
+
+
 class ProctorFrameOut(BaseModel):
     id: UUID
     seconds: int
@@ -280,6 +294,7 @@ class ConsoleReviewOut(ConsoleInterviewOut):
     # device check, independent of the proctoring toggle).
     selfie_url: str | None = None
     transcript: list[TranscriptTurnOut] = []
+    screening_answers: list[ScreeningAnswerOut] = []
     rubric: list[RubricAssessmentOut] = []
     # Proctor frames are paginated separately (GET …/{id}/snapshots).
     integrity: IntegrityOut | None = None
@@ -315,6 +330,73 @@ def _candidate_name(user_row: User | None) -> str:
     if user_row is None:
         return "Unknown"
     return user_row.display_name or user_row.email.split("@")[0]
+
+
+def _answer_present(value) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, list):
+        return len(value) > 0
+    return True
+
+
+def _format_screening_answer(value, field_type: str) -> str | None:
+    if not _answer_present(value):
+        return None
+    if field_type == "file":
+        return "File uploaded"
+    if isinstance(value, bool):
+        return "Yes" if value else "No"
+    if isinstance(value, list):
+        return ", ".join(str(item) for item in value if str(item).strip()) or None
+    if isinstance(value, dict):
+        return json.dumps(value, ensure_ascii=False)
+    return str(value)
+
+
+def _screening_answers(
+    submission: FormSubmission | None,
+    template: FormTemplate | None,
+    file: StoredFile | None = None,
+    file_url: str | None = None,
+) -> list[ScreeningAnswerOut]:
+    if submission is None or template is None:
+        return []
+    schema = template.schema or {}
+    properties = schema.get("properties") or {}
+    required = set(schema.get("required") or [])
+    order = (schema.get("x-kandidly") or {}).get("field_order") or list(properties)
+    answers = submission.answers or {}
+
+    rows: list[ScreeningAnswerOut] = []
+    for key in order:
+        prop = properties.get(key)
+        if not isinstance(prop, dict):
+            continue
+        field_type = prop.get("x-builder-type") or prop.get("x-field") or prop.get("type") or "text"
+        value = answers.get(key)
+        is_file = str(field_type) == "file"
+        answered = _answer_present(value) or (is_file and file is not None)
+        answer = _format_screening_answer(value, str(field_type))
+        if is_file and file is not None:
+            answer = "File uploaded"
+        file_ext = file.key.rsplit(".", 1)[-1] if is_file and file is not None else None
+        rows.append(
+            ScreeningAnswerOut(
+                key=key,
+                label=prop.get("title") or prop.get("x-label") or key,
+                field_type=str(field_type),
+                required=key in required,
+                answered=answered,
+                answer=answer,
+                file_url=file_url if is_file else None,
+                file_mime=file.mime if is_file and file is not None else None,
+                file_name=f"{prop.get('title') or key}.{file_ext}" if file_ext else None,
+            )
+        )
+    return rows
 
 
 async def _req_stats(db: AsyncSession, req_ids: list[UUID]) -> tuple[dict, dict, dict]:
@@ -892,6 +974,31 @@ async def get_console_review(
 
     base = _ledger_row(interview, candidate, req, report)  # type: ignore[arg-type]
 
+    submission: FormSubmission | None = None
+    template: FormTemplate | None = None
+    screening_file: StoredFile | None = None
+    screening_file_url: str | None = None
+    if app is not None:
+        submission = (
+            await db.execute(select(FormSubmission).where(FormSubmission.application_id == app.id))
+        ).scalar_one_or_none()
+        if submission is not None:
+            template = await db.get(FormTemplate, submission.template_id)
+            if submission.resume_file_id is not None:
+                screening_file = await db.get(StoredFile, submission.resume_file_id)
+                if screening_file is not None:
+                    screening_file_url = await storage.presign_get(
+                        screening_file.bucket,
+                        screening_file.key,
+                        public=True,
+                    )
+    screening_answers = _screening_answers(
+        submission,
+        template,
+        file=screening_file,
+        file_url=screening_file_url,
+    )
+
     # Transcript with offsets from interview start.
     turns = (
         (await db.execute(select(Turn).where(Turn.interview_id == interview.id).order_by(Turn.seq)))
@@ -1083,6 +1190,7 @@ async def get_console_review(
         waveform=interview.audio_waveform,
         selfie_url=selfie_url,
         transcript=transcript,
+        screening_answers=screening_answers,
         rubric=rubric_rows,
         integrity=integrity,
         review_trail=trail,

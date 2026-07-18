@@ -17,6 +17,7 @@ import type {
   ProctorFrame,
   RubricAssessment,
   ScoringStatus,
+  ScreeningAnswer,
   TranscriptTurn,
 } from '../pages/console/interviewData';
 
@@ -118,6 +119,17 @@ export interface ConsoleReviewWire extends ConsoleInterviewWire {
   waveform: { peaks: number[]; bins: number; duration_seconds: number } | null;
   selfie_url: string | null;
   transcript: { id: string; seconds: number; speaker: string; text: string }[];
+  screening_answers: {
+    key: string;
+    label: string;
+    field_type: string;
+    required: boolean;
+    answered: boolean;
+    answer: string | null;
+    file_url: string | null;
+    file_mime: string | null;
+    file_name: string | null;
+  }[];
   rubric: { key: string; label: string; weight: number; score: number; summary: string; reasoning: string }[];
   integrity: {
     verdict: IntegrityVerdict;
@@ -293,6 +305,17 @@ export function toReview(wire: ConsoleReviewWire): ReviewData {
     speaker: t.speaker === 'kandidly' ? 'AI' : 'Candidate',
     text: t.text,
   }));
+  const screeningAnswers: ScreeningAnswer[] = (wire.screening_answers ?? []).map(answer => ({
+    key: answer.key,
+    label: answer.label,
+    fieldType: answer.field_type,
+    required: answer.required,
+    answered: answer.answered,
+    answer: answer.answer,
+    fileUrl: answer.file_url,
+    fileMime: answer.file_mime,
+    fileName: answer.file_name,
+  }));
   const rubric: RubricAssessment[] = wire.rubric.map(r => ({
     id: r.key,
     label: r.label,
@@ -336,6 +359,7 @@ export function toReview(wire: ConsoleReviewWire): ReviewData {
       'Scoring in progress — the assessment summary will appear once evaluation completes.',
     comparisonScores: wire.comparison_scores,
     transcript,
+    screeningAnswers,
     integrity,
     rubric,
     waveformPeaks: wire.waveform?.peaks ?? null,

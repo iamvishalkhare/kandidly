@@ -30,6 +30,18 @@ export interface RubricAssessment {
   reasoning: string;
 }
 
+export interface ScreeningAnswer {
+  key: string;
+  label: string;
+  fieldType: string;
+  required: boolean;
+  answered: boolean;
+  answer: string | null;
+  fileUrl?: string | null;
+  fileMime?: string | null;
+  fileName?: string | null;
+}
+
 export interface ProctorFrame {
   id: string;
   at: string;
@@ -71,6 +83,7 @@ export interface InterviewReview extends InterviewRecord {
   assessmentSummary: string;
   comparisonScores: number[];
   transcript: TranscriptTurn[];
+  screeningAnswers: ScreeningAnswer[];
   // Proctor frames are fetched separately, paginated (useProctorFrames).
   integrity: IntegritySummary | null;
   rubric: RubricAssessment[];
@@ -186,6 +199,43 @@ function buildReview(record: InterviewRecord, index: number): InterviewReview {
     assessmentSummary: 'Automated assessment synthesized from the transcript, rubric evidence, and interview metadata.',
     comparisonScores: [54, 61, 66, 71, 75, 79, 82, 86, 89, 92, 95],
     transcript: BASE_TRANSCRIPT,
+    screeningAnswers: [
+      {
+        key: 'full_name',
+        label: 'Full name',
+        fieldType: 'text',
+        required: true,
+        answered: true,
+        answer: record.candidateName,
+      },
+      {
+        key: 'why_this_role',
+        label: 'Why this role',
+        fieldType: 'textarea',
+        required: true,
+        answered: true,
+        answer: 'I am excited by the role scope, the product direction, and the chance to work on applied AI systems with clear customer impact.',
+      },
+      {
+        key: 'current_company',
+        label: 'Current company',
+        fieldType: 'text',
+        required: false,
+        answered: true,
+        answer: 'Example Labs',
+      },
+      {
+        key: 'resume',
+        label: 'Resume',
+        fieldType: 'file',
+        required: true,
+        answered: true,
+        answer: 'File uploaded',
+        fileUrl: null,
+        fileMime: 'application/pdf',
+        fileName: 'Resume.pdf',
+      },
+    ],
     integrity: null,
     rubric: BASE_RUBRIC.map(item => ({
       ...item,
