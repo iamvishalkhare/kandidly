@@ -22,6 +22,9 @@ class ConfigOut(BaseModel):
 class LinkResolveOut(BaseModel):
     title: str | None = None
     interview_type: str | None = None
+    # Configured interview length (interview_config.max_duration_seconds), so
+    # the landing page quotes the real duration instead of a generic 30 min.
+    duration_minutes: int | None = None
     status_ok: bool
     reason: str | None = None
 
@@ -41,9 +44,11 @@ class ApplicationOut(BaseModel):
     template_schema: dict | None = None
     answers: dict | None = None
     resume_parse_status: str | None = None
-    # Per-requisition proctoring toggle — the lobby skips the camera/selfie
-    # step (and its permission prompt) when False.
+    # Per-requisition proctoring toggle — controls the periodic snapshot loop
+    # during the interview (the lobby's verification selfie is always required).
     proctoring_enabled: bool = True
+    # Configured interview length, for candidate-facing "up to N minutes" copy.
+    duration_minutes: int = 30
 
 
 class FormPatchIn(BaseModel):

@@ -28,9 +28,9 @@ import {
   type RemoteTrackPublication,
   type RemoteParticipant,
 } from 'livekit-client';
-import { Mic, MicOff, PhoneOff, Volume2, WifiOff, AlertTriangle, CameraOff, X } from 'lucide-react';
+import { Mic, MicOff, PhoneOff, Settings2, Volume2, WifiOff, AlertTriangle, CameraOff, X } from 'lucide-react';
 import { candidateApi } from '../../lib/api';
-import { Button } from '../../components/ui';
+import { Button, Select } from '../../components/ui';
 import { AgentOrb, EqualizerBars } from '../../components/voice';
 import type { JoinOut } from '../../lib/types';
 import {
@@ -39,7 +39,7 @@ import {
   type InterviewMessage,
 } from '../../lib/interviewChannel';
 import { createVizEngine, type VizEngine, type VoiceAnalyser } from '../../lib/audioViz';
-import { getPreferredDevice } from '../../lib/devicePrefs';
+import { getPreferredDevice, setPreferredDevice } from '../../lib/devicePrefs';
 import { createInterviewRecorder, type InterviewRecorder } from '../../lib/useInterviewRecorder';
 import { startSnapshotLoop, type SnapshotLoop } from '../../lib/useProctorSnapshots';
 
@@ -88,6 +88,15 @@ export default function CandidateInterview() {
   const [micEnabled, setMicEnabled] = useState(true);
   const [needsAudioGesture, setNeedsAudioGesture] = useState(false);
   const [cameraBanner, setCameraBanner] = useState(false);
+
+  // Mid-interview device switching (mic republishes via LiveKit; camera
+  // repoints the proctoring snapshot loop).
+  const [devicesOpen, setDevicesOpen] = useState(false);
+  const [micDevices, setMicDevices] = useState<MediaDeviceInfo[]>([]);
+  const [camDevices, setCamDevices] = useState<MediaDeviceInfo[]>([]);
+  const [activeMicId, setActiveMicId] = useState('');
+  const [activeCamId, setActiveCamId] = useState('');
+  const [switchError, setSwitchError] = useState<string | null>(null);
 
   // Audio-level analysers driving the orb / equalizer / speaking status.
   const [agentAnalyser, setAgentAnalyser] = useState<VoiceAnalyser | null>(null);
@@ -346,6 +355,72 @@ export default function CandidateInterview() {
     }
   }, [micEnabled]);
 
+  // ── Mid-interview device switching ────────────────────────────────────────
+  const openDevices = useCallback(async () => {
+    setSwitchError(null);
+    setDevicesOpen(true);
+    try {
+      const all = await navigator.mediaDevices.enumerateDevices();
+      setMicDevices(all.filter(d => d.kind === 'audioinput' && d.deviceId));
+      setCamDevices(all.filter(d => d.kind === 'videoinput' && d.deviceId));
+    } catch {
+      /* the pickers just stay empty */
+    }
+    const room = roomRef.current;
+    setActiveMicId(
+      room?.getActiveDevice('audioinput') ??
+        room?.localParticipant
+          .getTrackPublication(Track.Source.Microphone)
+          ?.track?.mediaStreamTrack?.getSettings().deviceId ??
+        getPreferredDevice('audioinput') ??
+        '',
+    );
+    setActiveCamId(
+      snapshotsRef.current?.getDeviceId() ?? getPreferredDevice('videoinput') ?? '',
+    );
+  }, []);
+
+  const switchMic = useCallback(async (deviceId: string) => {
+    const room = roomRef.current;
+    if (!room || !deviceId) return;
+    setSwitchError(null);
+    try {
+      // `exact` so an explicit pick can't silently fall back to the old mic.
+      const ok = await room.switchActiveDevice('audioinput', deviceId, true);
+      if (!ok) throw new Error('switch rejected');
+      setActiveMicId(deviceId);
+      setPreferredDevice('audioinput', deviceId);
+      // The published track was restarted on the new device — repoint the
+      // equalizer analyser and mix the new track into the recording.
+      const track = room.localParticipant
+        .getTrackPublication(Track.Source.Microphone)
+        ?.track?.mediaStreamTrack;
+      if (track && vizRef.current) {
+        const analyser = vizRef.current.attach(track);
+        setMicAnalyser(prev => {
+          prev?.dispose();
+          return analyser;
+        });
+        recorderRef.current?.addTrack(track);
+      }
+    } catch {
+      setSwitchError("Couldn't switch microphone — still using the previous one.");
+    }
+  }, []);
+
+  const switchCam = useCallback(async (deviceId: string) => {
+    if (!deviceId) return;
+    setSwitchError(null);
+    const ok = await snapshotsRef.current?.setDevice(deviceId);
+    if (ok) {
+      setActiveCamId(deviceId);
+      setPreferredDevice('videoinput', deviceId);
+      setCameraBanner(false); // a working camera clears the denial notice
+    } else {
+      setSwitchError("Couldn't switch camera — still using the previous one.");
+    }
+  }, []);
+
   const enableAudio = useCallback(async () => {
     try {
       await roomRef.current?.startAudio();
@@ -567,6 +642,16 @@ export default function CandidateInterview() {
           {micEnabled ? 'Mic on' : 'Mic off'}
         </button>
         <button
+          onClick={() => void openDevices()}
+          aria-label="Change microphone or camera"
+          aria-expanded={devicesOpen}
+          className="h-12 w-12 sm:w-auto sm:px-4 shrink-0 flex items-center justify-center gap-2 border font-mono text-xs font-medium uppercase tracking-[0.1em] transition-colors duration-150"
+          style={{ borderColor: 'var(--border)', background: 'var(--surface)', color: 'var(--text-primary)' }}
+        >
+          <Settings2 size={16} />
+          <span className="hidden sm:inline">Devices</span>
+        </button>
+        <button
           onClick={leave}
           aria-label="End interview"
           className="h-12 flex-1 sm:flex-none sm:w-48 flex items-center justify-center gap-2 font-mono text-xs font-medium uppercase tracking-[0.1em] transition-colors duration-150"
@@ -576,6 +661,70 @@ export default function CandidateInterview() {
           End interview
         </button>
       </footer>
+
+      {/* Device switcher — bottom sheet on mobile, centered card on desktop.
+          Mic changes republish through LiveKit; camera changes repoint the
+          proctoring snapshot loop (hidden when proctoring is off). */}
+      {devicesOpen && (
+        <div
+          className="fixed inset-0 z-40 flex items-end sm:items-center justify-center p-4"
+          style={{ background: 'rgba(0,0,0,0.55)' }}
+          onClick={() => setDevicesOpen(false)}
+        >
+          <div
+            role="dialog"
+            aria-label="Device settings"
+            className="w-full max-w-md border"
+            style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}
+            onClick={e => e.stopPropagation()}
+          >
+            <header className="flex items-center justify-between px-4 py-3 border-b">
+              <span className="flex items-center gap-2 label-mono" style={{ color: 'var(--text-secondary)' }}>
+                <Settings2 size={14} />
+                Devices
+              </span>
+              <button
+                onClick={() => setDevicesOpen(false)}
+                aria-label="Close device settings"
+                className="opacity-70 hover:opacity-100"
+                style={{ color: 'var(--text-secondary)' }}
+              >
+                <X size={16} />
+              </button>
+            </header>
+            <div className="p-4 space-y-4">
+              <Select
+                label="Microphone"
+                value={activeMicId}
+                onChange={e => void switchMic(e.target.value)}
+                options={micDevices.map((d, i) => ({
+                  value: d.deviceId,
+                  label: d.label || `Microphone ${i + 1}`,
+                }))}
+              />
+              {joinData?.proctoring?.enabled !== false && (
+                <Select
+                  label="Camera"
+                  value={activeCamId}
+                  onChange={e => void switchCam(e.target.value)}
+                  options={camDevices.map((d, i) => ({
+                    value: d.deviceId,
+                    label: d.label || `Camera ${i + 1}`,
+                  }))}
+                />
+              )}
+              {switchError && (
+                <p className="text-xs" style={{ color: 'var(--amber-chip-text)' }}>
+                  {switchError}
+                </p>
+              )}
+              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                Changes apply immediately — the interview keeps going.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

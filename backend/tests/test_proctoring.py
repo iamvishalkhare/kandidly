@@ -71,7 +71,8 @@ def test_config_for_tolerates_legacy_snapshot_keys():
 
 
 # --------------------------------------------------------------------------- #
-# ingest gate — snapshots/events/selfies are refused when proctoring is off
+# ingest gate — snapshots/events are refused when proctoring is off (the
+# verification selfie is deliberately NOT gated: it is always required)
 # --------------------------------------------------------------------------- #
 class _FakeDB:
     """Only what _require_proctoring_enabled touches: db.get(Requisition, id)."""

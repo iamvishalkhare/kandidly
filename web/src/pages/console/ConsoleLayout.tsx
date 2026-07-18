@@ -9,8 +9,8 @@ import {
   LayoutDashboard,
   Briefcase,
   MessageSquare,
-  BookOpen,
-  BarChart3,
+  // BookOpen,   // re-enable with the Rubrics nav item
+  // BarChart3,  // re-enable with the Analytics nav item
   ChevronRight,
   Plus,
 } from 'lucide-react';
@@ -23,8 +23,10 @@ const NAV_ITEMS = [
   { label: 'Dashboard',    icon: LayoutDashboard, href: '/console',              exact: true },
   { label: 'Requisitions', icon: Briefcase,       href: '/console/requisitions', exact: false },
   { label: 'Interviews',   icon: MessageSquare,   href: '/console/interviews',   exact: false },
-  { label: 'Rubrics',      icon: BookOpen,        href: '/console/rubrics',      exact: false },
-  { label: 'Analytics',    icon: BarChart3,       href: '/console/analytics',    exact: false },
+  // Hidden until these sections have real content — uncomment to restore
+  // (also restore the BookOpen / BarChart3 imports above).
+  // { label: 'Rubrics',      icon: BookOpen,        href: '/console/rubrics',      exact: false },
+  // { label: 'Analytics',    icon: BarChart3,       href: '/console/analytics',    exact: false },
 ] as const;
 
 /** Sidebar footer: the signed-in user; opens the account/usage/logout modal. */

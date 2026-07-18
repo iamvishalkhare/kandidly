@@ -103,6 +103,7 @@ async def get_application(
     db: AsyncSession = Depends(get_db),
 ) -> ApplicationOut:
     from app.domain import proctoring
+    from app.schemas.interview_config import InterviewConfig
 
     app = await apps.get_owned(db, application_id, user.user_id)
     submission = (
@@ -110,6 +111,7 @@ async def get_application(
     ).scalar_one_or_none()
     template = await db.get(FormTemplate, submission.template_id) if submission else None
     requisition = await db.get(Requisition, app.requisition_id)
+    config = InterviewConfig(**((requisition.interview_config if requisition else None) or {}))
     return ApplicationOut(
         id=app.id,
         requisition_id=app.requisition_id,
@@ -122,6 +124,7 @@ async def get_application(
         proctoring_enabled=proctoring.config_for(
             requisition.interview_config if requisition else None
         ).enabled,
+        duration_minutes=config.max_duration_seconds // 60,
     )
 
 
@@ -315,12 +318,27 @@ async def post_selfie(
     user: AuthUser = Depends(require_candidate),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
+    # No proctoring gate: the verification selfie is always required (it
+    # identifies the candidate on the review page); the proctoring toggle only
+    # controls the periodic snapshot loop during the interview.
     app = await apps.get_owned(db, application_id, user.user_id)
-    await _require_proctoring_enabled(db, app.requisition_id)
     data = await image.read()
-    file_id = new_id()
     key = storage.selfie_key(app.id)
     await storage.put_object(storage.BUCKET_SELFIES, key, data, "image/webp")
+    # Retakes reuse the fixed key, and stored_files has a unique (bucket, key)
+    # constraint — update the existing row instead of inserting a duplicate.
+    existing = (
+        await db.execute(
+            select(StoredFile).where(
+                StoredFile.bucket == storage.BUCKET_SELFIES, StoredFile.key == key
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        existing.bytes = len(data)
+        existing.created_by = user.user_id
+        return {"file_id": str(existing.id)}
+    file_id = new_id()
     db.add(
         StoredFile(
             id=file_id,
@@ -346,8 +364,9 @@ async def _owned_interview(db: AsyncSession, interview_id: UUID, user: AuthUser)
 
 
 async def _require_proctoring_enabled(db: AsyncSession, requisition_id: UUID) -> None:
-    """Reject proctoring data (snapshots/events/selfies) when the requisition's
-    proctoring toggle is off — the client shouldn't send any, but enforce it."""
+    """Reject proctoring data (snapshots/events) when the requisition's
+    proctoring toggle is off — the client shouldn't send any, but enforce it.
+    The verification selfie is NOT gated: it is always required."""
     from app.domain import proctoring
 
     requisition = await db.get(Requisition, requisition_id)

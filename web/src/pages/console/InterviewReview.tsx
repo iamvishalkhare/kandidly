@@ -122,6 +122,57 @@ function CopyButton({ text, label }: { text: string; label: string }) {
   );
 }
 
+/** Labeled copy button for larger text blocks (e.g. the assessment summary). */
+function CopyTextButton({ text, label }: { text: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(text);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        } catch {
+          /* clipboard unavailable (insecure context) — nothing to copy to */
+        }
+      }}
+      className="inline-flex items-center gap-2 border border-outline-variant px-3 py-1.5 label-mono text-on-surface-variant hover:text-primary-fixed-dim hover:border-primary-container transition-colors duration-150"
+    >
+      {copied ? (
+        <Check size={14} className="text-[var(--emerald-chip-text)]" />
+      ) : (
+        <Copy size={14} />
+      )}
+      {copied ? 'Copied' : label}
+    </button>
+  );
+}
+
+/** Lobby verification selfie. The presigned URL rotates on every review
+ * refetch, so pin the first one — otherwise the 4–10s evaluation polls would
+ * re-fetch the image over and over. onError adopts the newest signature
+ * (fresh presign after the 10-min expiry). */
+function CandidatePhoto({ url, alt }: { url?: string | null; alt: string }) {
+  const pinnedRef = useRef<string | null>(null);
+  const [, bump] = useState(0);
+  if (!pinnedRef.current && url) pinnedRef.current = url;
+  if (!pinnedRef.current) return null;
+  return (
+    <img
+      src={pinnedRef.current}
+      alt={alt}
+      onError={() => {
+        if (url && url !== pinnedRef.current) {
+          pinnedRef.current = url;
+          bump(n => n + 1);
+        }
+      }}
+      className="size-16 shrink-0 border border-outline-variant object-cover bg-surface-container-lowest"
+    />
+  );
+}
+
 function EvidenceMetric({
   label,
   value,
@@ -887,19 +938,27 @@ export default function InterviewReview() {
               <ArrowLeft size={16} />
               Interviews
             </Link>
-            <h1 className="font-display text-headline-lg text-on-surface tracking-tight mt-2">{interview.candidateName}</h1>
-            {interview.candidateEmail && (
-              <div className="mt-1 flex items-center gap-2">
-                <p className="text-on-surface-variant break-all">{interview.candidateEmail}</p>
-                <CopyButton
-                  text={interview.candidateEmail}
-                  label={`Copy ${interview.candidateEmail}`}
-                />
+            <div className="mt-2 flex items-start gap-4">
+              <CandidatePhoto
+                url={interview.selfieUrl}
+                alt={`${interview.candidateName} — verification photo`}
+              />
+              <div>
+                <h1 className="font-display text-headline-lg text-on-surface tracking-tight">{interview.candidateName}</h1>
+                {interview.candidateEmail && (
+                  <div className="mt-1 flex items-center gap-2">
+                    <p className="text-on-surface-variant break-all">{interview.candidateEmail}</p>
+                    <CopyButton
+                      text={interview.candidateEmail}
+                      label={`Copy ${interview.candidateEmail}`}
+                    />
+                  </div>
+                )}
+                <p className="label-mono text-on-surface-variant mt-1">
+                  {interview.code.toUpperCase()} / {interview.requisitionId} / {interview.requisitionTitle}
+                </p>
               </div>
-            )}
-            <p className="label-mono text-on-surface-variant mt-1">
-              {interview.code.toUpperCase()} / {interview.requisitionId} / {interview.requisitionTitle}
-            </p>
+            </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {(['Shortlist', 'Hold', 'Reject'] as const).map(action => {
@@ -944,6 +1003,11 @@ export default function InterviewReview() {
                   )}
                 </div>
                 <p className="mt-4 text-body-md text-on-surface max-w-3xl">{interview.assessmentSummary}</p>
+                {interview.scoringStatus === 'Done' && interview.assessmentSummary && (
+                  <div className="mt-3">
+                    <CopyTextButton text={interview.assessmentSummary} label="Copy summary" />
+                  </div>
+                )}
               </div>
               <div className="shrink-0 w-full md:w-[420px] border border-outline-variant bg-surface-container-lowest px-5 py-4 text-center">
                 <p className="label-mono text-on-surface-variant">Final Score</p>
