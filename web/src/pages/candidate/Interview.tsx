@@ -6,6 +6,13 @@
  * countdown timer, and interview state from the `kandidly` data channel
  * (see web/src/lib/interviewChannel.ts, mirroring agent/datamsg.py).
  *
+ * Layout is a CSS grid (.interview-grid in index.css): header / stage /
+ * transcript / controls stacked on mobile, with the transcript as a
+ * full-height right rail on desktop. The stage renders both voices from the
+ * real audio via Web Audio analysers (components/voice.tsx): the agent as a
+ * level-driven orb, the candidate as an FFT equalizer strip. Speaking status
+ * is derived from those levels, not caption timing.
+ *
  * The JoinOut is normally handed over from the lobby via router state; on a
  * refresh or direct navigation we re-call join (an idempotent rejoin once the
  * application is in_interview).
@@ -23,14 +30,16 @@ import {
 } from 'livekit-client';
 import { Mic, MicOff, PhoneOff, Volume2, WifiOff, AlertTriangle, CameraOff, X } from 'lucide-react';
 import { candidateApi } from '../../lib/api';
-import { Button, Spinner } from '../../components/ui';
-import { cn } from '../../lib/utils';
+import { Button } from '../../components/ui';
+import { AgentOrb, EqualizerBars } from '../../components/voice';
 import type { JoinOut } from '../../lib/types';
 import {
   decodeInterviewMessage,
   formatRemaining,
   type InterviewMessage,
 } from '../../lib/interviewChannel';
+import { createVizEngine, type VizEngine, type VoiceAnalyser } from '../../lib/audioViz';
+import { getPreferredDevice } from '../../lib/devicePrefs';
 import { createInterviewRecorder, type InterviewRecorder } from '../../lib/useInterviewRecorder';
 import { startSnapshotLoop, type SnapshotLoop } from '../../lib/useProctorSnapshots';
 
@@ -55,6 +64,8 @@ interface Caption {
   text: string;
 }
 
+type ActiveVoice = 'kandidly' | 'candidate' | null;
+
 function speakerLabel(speaker: string): string {
   if (speaker === 'kandidly') return 'Kandidly';
   if (speaker === 'candidate') return 'You';
@@ -78,9 +89,16 @@ export default function CandidateInterview() {
   const [needsAudioGesture, setNeedsAudioGesture] = useState(false);
   const [cameraBanner, setCameraBanner] = useState(false);
 
+  // Audio-level analysers driving the orb / equalizer / speaking status.
+  const [agentAnalyser, setAgentAnalyser] = useState<VoiceAnalyser | null>(null);
+  const [micAnalyser, setMicAnalyser] = useState<VoiceAnalyser | null>(null);
+  const [activeVoice, setActiveVoice] = useState<ActiveVoice>(null);
+
   const roomRef = useRef<Room | null>(null);
+  const vizRef = useRef<VizEngine | null>(null);
   const audioElsRef = useRef<HTMLAudioElement[]>([]);
   const transcriptRef = useRef<HTMLDivElement>(null);
+  const stickToBottomRef = useRef(true);
   const recorderRef = useRef<InterviewRecorder | null>(null);
   const snapshotsRef = useRef<SnapshotLoop | null>(null);
 
@@ -135,6 +153,8 @@ export default function CandidateInterview() {
     if (!joinData) return;
     const room = new Room();
     roomRef.current = room;
+    const viz = createVizEngine();
+    vizRef.current = viz;
     let cancelled = false;
 
     const handleData = (payload: Uint8Array) => {
@@ -181,8 +201,16 @@ export default function CandidateInterview() {
       audioElsRef.current.push(el);
       // Browsers may block autoplay without a gesture — prompt if so.
       el.play?.().catch(() => setNeedsAudioGesture(true));
-      // Mix the agent's audio into the interview recording (best-effort).
-      if (track.mediaStreamTrack) recorderRef.current?.addTrack(track.mediaStreamTrack);
+      if (track.mediaStreamTrack) {
+        // Mix the agent's audio into the interview recording (best-effort).
+        recorderRef.current?.addTrack(track.mediaStreamTrack);
+        // Drive the orb from the agent's real output level.
+        const analyser = viz.attach(track.mediaStreamTrack);
+        setAgentAnalyser(prev => {
+          prev?.dispose();
+          return analyser;
+        });
+      }
     };
 
     const handlePlaybackChanged = () => {
@@ -199,19 +227,27 @@ export default function CandidateInterview() {
       try {
         await room.connect(joinData.livekit_url, joinData.token);
         if (cancelled) return;
-        await room.localParticipant.setMicrophoneEnabled(true);
+        // Use the mic chosen in the lobby device check when there is one;
+        // `ideal` lets the browser fall back if that device is gone.
+        const preferredMic = getPreferredDevice('audioinput');
+        await room.localParticipant.setMicrophoneEnabled(
+          true,
+          preferredMic ? { deviceId: { ideal: preferredMic } } : undefined,
+        );
         if (cancelled) return;
         setMicEnabled(true);
         setNeedsAudioGesture(!room.canPlaybackAudio);
         setPhase('live');
+
+        const micTrack = room.localParticipant.getTrackPublication(Track.Source.Microphone)
+          ?.track?.mediaStreamTrack;
+        if (micTrack) setMicAnalyser(viz.attach(micTrack));
 
         // Recording + proctoring are best-effort side channels: any failure
         // here must never break the live call.
         const interviewId = interviewIdFromRoom(joinData.room_name);
         if (interviewId) {
           try {
-            const micTrack = room.localParticipant.getTrackPublication(Track.Source.Microphone)
-              ?.track?.mediaStreamTrack;
             if (micTrack && !recorderRef.current) {
               recorderRef.current = createInterviewRecorder(interviewId);
               recorderRef.current?.addTrack(micTrack);
@@ -229,6 +265,7 @@ export default function CandidateInterview() {
           if (!snapshotsRef.current && joinData.proctoring?.enabled !== false) {
             snapshotsRef.current = startSnapshotLoop(interviewId, {
               intervalS: joinData.proctoring?.snapshot_interval_s ?? 10,
+              deviceId: getPreferredDevice('videoinput'),
               onCameraDenied: () => setCameraBanner(true),
             });
           }
@@ -243,6 +280,10 @@ export default function CandidateInterview() {
       room.removeAllListeners();
       room.disconnect();
       roomRef.current = null;
+      viz.dispose();
+      vizRef.current = null;
+      setAgentAnalyser(null);
+      setMicAnalyser(null);
       void recorderRef.current?.stop();
       recorderRef.current = null;
       snapshotsRef.current?.stop();
@@ -255,10 +296,38 @@ export default function CandidateInterview() {
     };
   }, [joinData, leave]);
 
-  // Auto-scroll the transcript as new lines arrive.
+  // ── Who is speaking, from real audio levels (not caption timing) ──────────
+  useEffect(() => {
+    if (phase !== 'live') return;
+    let last: ActiveVoice = null;
+    let lastAt = 0;
+    const id = setInterval(() => {
+      const agent = agentAnalyser?.readLevel() ?? 0;
+      const cand = micEnabled ? micAnalyser?.readLevel() ?? 0 : 0;
+      const now = Date.now();
+      let next: ActiveVoice = null;
+      if (agent > 0.1 && agent >= cand) next = 'kandidly';
+      else if (cand > 0.1) next = 'candidate';
+      if (next) {
+        last = next;
+        lastAt = now;
+      } else if (now - lastAt < 1200) {
+        next = last; // short hang so the label doesn't flicker between words
+      }
+      setActiveVoice(next);
+    }, 160);
+    return () => clearInterval(id);
+  }, [phase, agentAnalyser, micAnalyser, micEnabled]);
+
+  // Stream the transcript: stay pinned to the newest line unless the
+  // candidate has scrolled up to re-read something.
+  const handleTranscriptScroll = useCallback(() => {
+    const el = transcriptRef.current;
+    if (el) stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  }, []);
   useEffect(() => {
     const el = transcriptRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (el && stickToBottomRef.current) el.scrollTop = el.scrollHeight;
   }, [finals, partial]);
 
   const toggleMic = useCallback(async () => {
@@ -267,7 +336,11 @@ export default function CandidateInterview() {
     const next = !micEnabled;
     setMicEnabled(next);
     try {
-      await room.localParticipant.setMicrophoneEnabled(next);
+      const preferredMic = getPreferredDevice('audioinput');
+      await room.localParticipant.setMicrophoneEnabled(
+        next,
+        next && preferredMic ? { deviceId: { ideal: preferredMic } } : undefined,
+      );
     } catch {
       setMicEnabled(!next); // revert on failure
     }
@@ -276,6 +349,7 @@ export default function CandidateInterview() {
   const enableAudio = useCallback(async () => {
     try {
       await roomRef.current?.startAudio();
+      vizRef.current?.resume();
       audioElsRef.current.forEach(el => el.play?.().catch(() => {}));
       setNeedsAudioGesture(false);
     } catch {
@@ -283,7 +357,6 @@ export default function CandidateInterview() {
     }
   }, []);
 
-  const speaking = partial?.speaker ?? finals[finals.length - 1]?.speaker ?? null;
   const isWrapping = timer?.phase === 'wrap' || timer?.phase === 'wrap_up';
 
   // ── Non-live phases ───────────────────────────────────────────────────────
@@ -319,15 +392,17 @@ export default function CandidateInterview() {
   if (phase === 'acquiring' || phase === 'not_ready' || phase === 'connecting') {
     const label =
       phase === 'not_ready'
-        ? 'Kandidly is getting ready…'
+        ? 'Kandidly is getting ready'
         : phase === 'connecting'
-          ? 'Connecting you to the interview…'
-          : 'Preparing your interview…';
+          ? 'Connecting you to the interview'
+          : 'Preparing your interview';
     return (
       <InterviewShell>
-        <div className="flex flex-col items-center gap-4 py-8">
-          <Spinner size={28} />
-          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{label}</p>
+        <div className="flex flex-col items-center gap-8 py-8">
+          <AgentOrb analyser={null} size={128} />
+          <p className="label-mono blink" style={{ color: 'var(--text-muted)' }}>
+            {label}…
+          </p>
         </div>
       </InterviewShell>
     );
@@ -337,126 +412,167 @@ export default function CandidateInterview() {
   // The agent's audio is played via elements appended to <body> in
   // handleTrackSubscribed (see above), so there's no <audio> in this tree.
   return (
-    <div className="min-h-screen flex flex-col" style={{ background: 'var(--background)' }}>
-      {/* Top bar */}
-      <header className="flex items-center justify-between px-4 sm:px-6 py-4 border-b" style={{ borderColor: 'var(--border)' }}>
-        <div className="flex items-center gap-2.5">
-          <div
-            className="size-7 rounded-md flex items-center justify-center text-white font-bold text-sm"
-            style={{ background: 'var(--accent)' }}
-          >
-            K
-          </div>
-          <span className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>
-            Live interview
-          </span>
-        </div>
-        {timer && (
-          <div className="flex items-center gap-2 text-sm tabular-nums" style={{ color: isWrapping ? '#fbbf24' : 'var(--text-secondary)' }}>
-            {isWrapping && <span className="text-xs uppercase tracking-wide">Wrapping up</span>}
-            <span className="font-medium">{formatRemaining(timer.remaining_s)}</span>
-          </div>
-        )}
-      </header>
-
-      {/* Audio-blocked banner */}
-      {needsAudioGesture && (
-        <button
-          onClick={enableAudio}
-          className="flex items-center justify-center gap-2 py-2.5 text-sm font-medium w-full"
-          style={{ background: 'var(--accent-muted)', color: 'var(--accent)' }}
-        >
-          <Volume2 size={15} />
-          Tap to enable interview audio
-        </button>
-      )}
-
-      {/* Camera unavailable banner — proctoring degrades, interview continues */}
-      {cameraBanner && (
-        <div
-          className="flex items-center justify-center gap-2 py-2.5 px-4 text-sm w-full"
-          style={{ background: 'rgba(245,158,11,0.08)', color: '#fbbf24' }}
-        >
-          <CameraOff size={15} />
-          <span>Camera unavailable — this session will be flagged for manual review.</span>
-          <button
-            onClick={() => setCameraBanner(false)}
-            aria-label="Dismiss camera notice"
-            className="ml-2 opacity-70 hover:opacity-100"
-          >
-            <X size={14} />
-          </button>
-        </div>
-      )}
-
-      {/* Center: agent orb + speaking status */}
-      <div className="flex-1 flex flex-col items-center justify-center gap-6 px-4 py-8">
-        <div className="relative flex items-center justify-center">
-          <div
-            className={cn(
-              'size-28 rounded-full flex items-center justify-center transition-all duration-300',
-              speaking === 'kandidly' && 'animate-pulse',
-            )}
-            style={{
-              background: 'var(--accent-muted)',
-              boxShadow: speaking === 'kandidly' ? '0 0 0 10px var(--accent-muted)' : 'none',
-            }}
-          >
+    <div className="interview-grid" style={{ background: 'var(--background)' }}>
+      {/* Header + interrupt banners */}
+      <div style={{ gridArea: 'header' }} className="border-b" >
+        <header className="flex items-center justify-between px-4 sm:px-6 h-14">
+          <div className="flex items-center gap-3">
             <div
-              className="size-16 rounded-full flex items-center justify-center text-white font-bold text-xl"
-              style={{ background: 'var(--accent)' }}
+              className="size-7 flex items-center justify-center font-display font-bold text-sm"
+              style={{ background: 'var(--accent)', color: 'var(--on-primary-container)' }}
             >
               K
             </div>
+            <span className="label-mono" style={{ color: 'var(--text-secondary)' }}>
+              Live interview
+            </span>
           </div>
-        </div>
-        <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-          {speaking === 'kandidly'
-            ? 'Kandidly is speaking…'
-            : speaking === 'candidate'
-              ? 'Listening…'
+          <div className="flex items-center gap-4">
+            <span className="hidden sm:flex items-center gap-1.5 label-mono" style={{ color: 'var(--error)' }}>
+              <span className="size-1.5 rounded-full blink" style={{ background: 'var(--error)' }} />
+              Rec
+            </span>
+            {timer && (
+              <span
+                className="font-mono text-sm font-medium tabular-nums"
+                style={{ color: isWrapping ? 'var(--amber-chip-text)' : 'var(--text-primary)' }}
+              >
+                {isWrapping && (
+                  <span className="text-2xs uppercase tracking-[0.15em] mr-2">Wrapping up</span>
+                )}
+                {formatRemaining(timer.remaining_s)}
+              </span>
+            )}
+          </div>
+        </header>
+
+        {needsAudioGesture && (
+          <button
+            onClick={enableAudio}
+            className="flex items-center justify-center gap-2 py-2.5 text-sm font-medium w-full"
+            style={{ background: 'var(--accent-muted)', color: 'var(--primary)' }}
+          >
+            <Volume2 size={15} />
+            Tap to enable interview audio
+          </button>
+        )}
+
+        {cameraBanner && (
+          <div
+            className="flex items-center justify-center gap-2 py-2.5 px-4 text-sm w-full"
+            style={{ background: 'var(--amber-chip-bg)', color: 'var(--amber-chip-text)' }}
+          >
+            <CameraOff size={15} />
+            <span>Camera unavailable — this session will be flagged for manual review.</span>
+            <button
+              onClick={() => setCameraBanner(false)}
+              aria-label="Dismiss camera notice"
+              className="ml-2 opacity-70 hover:opacity-100"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Stage: agent orb + speaking status + candidate equalizer */}
+      <section
+        style={{ gridArea: 'stage' }}
+        className="flex flex-col items-center justify-center gap-5 lg:gap-8 px-4 py-6 lg:py-10 min-h-0"
+      >
+        <AgentOrb analyser={agentAnalyser} className="size-36 sm:size-40 lg:size-48 shrink-0" />
+        <p
+          className="label-mono text-center"
+          style={{
+            color: activeVoice === 'kandidly' ? 'var(--primary)' : 'var(--text-muted)',
+          }}
+        >
+          {activeVoice === 'kandidly'
+            ? 'Kandidly is speaking'
+            : activeVoice === 'candidate'
+              ? 'Listening to you'
               : 'Interview in progress'}
         </p>
-      </div>
+        <div className="w-full max-w-md">
+          <div className="flex items-center justify-between mb-2">
+            <span
+              className="font-mono text-2xs font-medium uppercase tracking-[0.15em]"
+              style={{
+                color: activeVoice === 'candidate' ? 'var(--primary)' : 'var(--text-muted)',
+              }}
+            >
+              You
+            </span>
+            {!micEnabled && (
+              <span
+                className="font-mono text-2xs font-medium uppercase tracking-[0.15em]"
+                style={{ color: 'var(--error)' }}
+              >
+                Muted
+              </span>
+            )}
+          </div>
+          <EqualizerBars analyser={micEnabled ? micAnalyser : null} height={44} />
+        </div>
+      </section>
 
-      {/* Transcript / captions */}
-      <div
-        ref={transcriptRef}
-        className="max-h-48 overflow-y-auto px-4 sm:px-6 pb-4 space-y-3 w-full max-w-2xl mx-auto"
+      {/* Transcript rail */}
+      <aside
+        style={{ gridArea: 'transcript', background: 'var(--surface-container-lowest)' }}
+        className="min-h-0 flex flex-col border-t lg:border-t-0 lg:border-l"
       >
-        {finals.length === 0 && !partial && (
-          <p className="text-center text-xs" style={{ color: 'var(--text-muted)' }}>
-            Captions will appear here as the conversation begins.
-          </p>
-        )}
-        {finals.map(c => (
-          <CaptionLine key={c.seq} speaker={c.speaker} text={c.text} />
-        ))}
-        {partial && <CaptionLine speaker={partial.speaker} text={partial.text} dim />}
-      </div>
+        <div className="flex items-center justify-between px-4 lg:px-5 py-3 border-b shrink-0">
+          <span className="label-mono" style={{ color: 'var(--text-muted)' }}>
+            Transcript
+          </span>
+          <span className="font-mono text-2xs tabular-nums" style={{ color: 'var(--text-muted)' }}>
+            {finals.length} {finals.length === 1 ? 'turn' : 'turns'}
+          </span>
+        </div>
+        <div
+          ref={transcriptRef}
+          onScroll={handleTranscriptScroll}
+          aria-live="polite"
+          className="flex-1 min-h-0 overflow-y-auto px-4 lg:px-5 py-4 space-y-4"
+        >
+          {finals.length === 0 && !partial && (
+            <p className="font-mono text-2xs uppercase tracking-[0.15em] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+              Captions appear here as the conversation begins.
+            </p>
+          )}
+          {finals.map(c => (
+            <CaptionLine key={c.seq} speaker={c.speaker} text={c.text} />
+          ))}
+          {partial && <CaptionLine speaker={partial.speaker} text={partial.text} streaming />}
+        </div>
+      </aside>
 
       {/* Controls */}
-      <footer className="flex items-center justify-center gap-4 px-4 py-6 border-t" style={{ borderColor: 'var(--border)' }}>
+      <footer
+        style={{ gridArea: 'controls', paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}
+        className="flex items-center justify-center gap-3 border-t px-4 pt-3"
+      >
         <button
           onClick={toggleMic}
           aria-label={micEnabled ? 'Mute microphone' : 'Unmute microphone'}
           aria-pressed={!micEnabled}
-          className="size-12 rounded-full flex items-center justify-center border transition-all duration-150"
-          style={{
-            borderColor: micEnabled ? 'var(--border)' : '#ef4444',
-            background: micEnabled ? 'var(--surface)' : 'rgba(239,68,68,0.1)',
-            color: micEnabled ? 'var(--text-primary)' : '#f87171',
-          }}
+          className="h-12 flex-1 sm:flex-none sm:w-40 flex items-center justify-center gap-2 border font-mono text-xs font-medium uppercase tracking-[0.1em] transition-colors duration-150"
+          style={
+            micEnabled
+              ? { borderColor: 'var(--border)', background: 'var(--surface)', color: 'var(--text-primary)' }
+              : { borderColor: 'var(--error)', background: 'var(--red-chip-bg)', color: 'var(--error)' }
+          }
         >
-          {micEnabled ? <Mic size={18} /> : <MicOff size={18} />}
+          {micEnabled ? <Mic size={16} /> : <MicOff size={16} />}
+          {micEnabled ? 'Mic on' : 'Mic off'}
         </button>
         <button
           onClick={leave}
           aria-label="End interview"
-          className="h-12 px-5 rounded-full flex items-center gap-2 text-sm font-medium text-white transition-all duration-150"
-          style={{ background: '#ef4444' }}
+          className="h-12 flex-1 sm:flex-none sm:w-48 flex items-center justify-center gap-2 font-mono text-xs font-medium uppercase tracking-[0.1em] transition-colors duration-150"
+          style={{ background: 'var(--error-container)', color: 'var(--on-error-container)' }}
         >
-          <PhoneOff size={17} />
+          <PhoneOff size={16} />
           End interview
         </button>
       </footer>
@@ -464,18 +580,19 @@ export default function CandidateInterview() {
   );
 }
 
-function CaptionLine({ speaker, text, dim }: { speaker: string; text: string; dim?: boolean }) {
+function CaptionLine({ speaker, text, streaming }: { speaker: string; text: string; streaming?: boolean }) {
   const isAgent = speaker === 'kandidly';
   return (
-    <div className={cn('flex flex-col gap-0.5', dim && 'opacity-60')}>
+    <div className="space-y-1">
       <span
-        className="text-xs font-medium uppercase tracking-wide"
-        style={{ color: isAgent ? 'var(--accent)' : 'var(--text-muted)' }}
+        className="font-mono text-2xs font-medium uppercase tracking-[0.15em]"
+        style={{ color: isAgent ? 'var(--primary)' : 'var(--text-muted)' }}
       >
         {speakerLabel(speaker)}
       </span>
       <p className="text-sm leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
         {text}
+        {streaming && <span className="caption-caret" />}
       </p>
     </div>
   );
@@ -487,8 +604,8 @@ function InterviewShell({ children }: { children: React.ReactNode }) {
       <div className="w-full max-w-sm flex flex-col items-center">
         <div className="flex justify-center mb-8">
           <div
-            className="size-8 rounded-lg flex items-center justify-center text-white font-bold text-sm"
-            style={{ background: 'var(--accent)' }}
+            className="size-8 flex items-center justify-center font-display font-bold text-sm"
+            style={{ background: 'var(--accent)', color: 'var(--on-primary-container)' }}
           >
             K
           </div>
@@ -510,10 +627,10 @@ function StatusCard({
   body: string;
   tone: 'accent' | 'warn';
 }) {
-  const border = tone === 'warn' ? 'rgba(245,158,11,0.2)' : 'rgba(139,124,246,0.2)';
-  const bg = tone === 'warn' ? 'rgba(245,158,11,0.05)' : 'rgba(139,124,246,0.05)';
+  const border = tone === 'warn' ? 'rgba(245,158,11,0.2)' : 'rgba(46,91,255,0.3)';
+  const bg = tone === 'warn' ? 'rgba(245,158,11,0.05)' : 'rgba(46,91,255,0.05)';
   return (
-    <div className="rounded-xl border p-6 text-center space-y-3 w-full" style={{ borderColor: border, background: bg }}>
+    <div className="border p-6 text-center space-y-3 w-full" style={{ borderColor: border, background: bg }}>
       <div className="flex justify-center">{icon}</div>
       <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{title}</p>
       <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{body}</p>
