@@ -85,11 +85,8 @@ export const publicApi = {
     const { data } = await api.get<ConfigOut>('/api/public/config');
     return data;
   },
-  resolveLink: async (token: string, captchaToken?: string | null): Promise<LinkResolveOut> => {
-    const { data } = await api.get<LinkResolveOut>(
-      `/api/public/i/${token}`,
-      captchaToken ? { headers: { 'X-Recaptcha-Token': captchaToken } } : undefined,
-    );
+  resolveLink: async (token: string): Promise<LinkResolveOut> => {
+    const { data } = await api.get<LinkResolveOut>(`/api/public/i/${token}`);
     return data;
   },
   getDevUsers: async (): Promise<DevUser[]> => {
@@ -116,12 +113,8 @@ export const authApi = {
 // ─── Candidate ─────────────────────────────────────────────────────────────────
 
 export const candidateApi = {
-  claim: async (token: string, captchaToken?: string | null): Promise<ClaimOut> => {
-    const { data } = await api.post<ClaimOut>(
-      `/api/candidate/i/${token}/claim`,
-      undefined,
-      captchaToken ? { headers: { 'X-Recaptcha-Token': captchaToken } } : undefined,
-    );
+  claim: async (token: string): Promise<ClaimOut> => {
+    const { data } = await api.post<ClaimOut>(`/api/candidate/i/${token}/claim`);
     return data;
   },
   getApplication: async (id: string): Promise<ApplicationOut> => {

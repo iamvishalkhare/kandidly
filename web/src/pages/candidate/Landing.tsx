@@ -6,13 +6,12 @@
 
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { ArrowRight, AlertCircle, Clock, XCircle, Lock, ChevronRight } from 'lucide-react';
 import { publicApi, candidateApi } from '../../lib/api';
 import { setAuth, clearAuth } from '../../lib/auth';
-import { executeRecaptcha, loadRecaptcha } from '../../lib/recaptcha';
 import { Button, Spinner } from '../../components/ui';
-import type { ConfigOut, DevUser, LinkResolveOut } from '../../lib/types';
+import type { DevUser, LinkResolveOut } from '../../lib/types';
 
 // Map reason codes to friendly messages
 function ErrorPanel({ reason }: { reason: string | null }) {
@@ -26,7 +25,6 @@ function ErrorPanel({ reason }: { reason: string | null }) {
     requisition_closed:  { icon: <AlertCircle size={20} />, title: 'Position closed',    body: 'This position is no longer accepting applications.' },
     not_open_yet:        { icon: <Clock size={20} />,       title: 'Not open yet',       body: 'Applications for this role haven\'t opened yet.' },
     invalid:             { icon: <AlertCircle size={20} />, title: 'Invalid link',       body: 'This invite link doesn\'t exist or has been removed.' },
-    captcha_failed:      { icon: <AlertCircle size={20} />, title: 'Verification failed', body: 'We couldn\'t verify your browser. Refresh the page to try again.' },
   };
 
   const info = messages[reason ?? 'invalid'] ?? messages['invalid'];
@@ -117,32 +115,14 @@ export default function CandidateLanding() {
   const navigate = useNavigate();
   const [showPicker, setShowPicker] = useState(false);
 
-  // The landing endpoints (resolve + claim) are reCAPTCHA v3-guarded against
-  // bot floods, so fetch the site key first and warm the script; tokens are
-  // minted per request. Unconfigured key → null token → backend fails open.
-  const { data: config, isPending: configPending } = useQuery<ConfigOut>({
-    queryKey: ['config'],
-    queryFn: publicApi.getConfig,
-  });
-  const siteKey = config?.recaptcha_site_key ?? '';
-  useEffect(() => {
-    if (siteKey) loadRecaptcha(siteKey).catch(() => {});
-  }, [siteKey]);
-
   const { data: link, isPending, error } = useQuery<LinkResolveOut>({
     queryKey: ['link', token],
-    queryFn: async () => {
-      const captchaToken = await executeRecaptcha(siteKey, 'link_resolve').catch(() => null);
-      return publicApi.resolveLink(token!, captchaToken);
-    },
-    enabled: !!token && !configPending,
+    queryFn: () => publicApi.resolveLink(token!),
+    enabled: !!token,
   });
 
   const claimMutation = useMutation({
-    mutationFn: async () => {
-      const captchaToken = await executeRecaptcha(siteKey, 'claim').catch(() => null);
-      return candidateApi.claim(token!, captchaToken);
-    },
+    mutationFn: () => candidateApi.claim(token!),
     onSuccess: data => {
       routeByState(data.application_id, data.state, navigate);
     },
@@ -180,9 +160,6 @@ export default function CandidateLanding() {
     if (data?.code === 'forbidden') {
       return 'That account can’t apply — choose a candidate account below to continue.';
     }
-    if (data?.code === 'captcha_failed') {
-      return 'We couldn’t verify your browser. Please try again.';
-    }
     return 'Something went wrong. Please try again.';
   };
 
@@ -210,9 +187,7 @@ export default function CandidateLanding() {
     claimMutation.mutate();
   };
 
-  // ── Loading ── (isPending, not isLoading: the resolve query sits disabled
-  // while the config fetch settles, and a disabled query is pending but not
-  // loading — isLoading here would flash the error panel first)
+  // ── Loading ──
   if (isPending) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ background: 'var(--background)' }}>
@@ -223,10 +198,9 @@ export default function CandidateLanding() {
 
   // ── Error fetching ──
   if (error || !link) {
-    const code = (error as { response?: { data?: { code?: string } } } | null)?.response?.data?.code;
     return (
       <CenteredLayout>
-        <ErrorPanel reason={code === 'captcha_failed' ? 'captcha_failed' : 'invalid'} />
+        <ErrorPanel reason="invalid" />
       </CenteredLayout>
     );
   }
