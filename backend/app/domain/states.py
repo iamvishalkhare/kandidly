@@ -62,8 +62,10 @@ INTERVIEW_STATES: frozenset[str] = frozenset(
 )
 
 INTERVIEW_ALLOWED: dict[str, set[str]] = {
-    "created": {"lobby"},
-    "lobby": {"live"},
+    # "ended" here too: sweep_abandoned force-ends a lobby/created interview
+    # whose agent never dispatched/connected in time (SPEC §14).
+    "created": {"lobby", "ended"},
+    "lobby": {"live", "ended"},
     "live": {"paused", "wrap_up", "ended"},
     "paused": {"live", "ended"},
     "wrap_up": {"ended", "paused"},

@@ -23,11 +23,19 @@ from app.domain import applications as apps
 log = structlog.get_logger(__name__)
 
 _STALE_LIVE_SECONDS = 90  # SPEC §14 sweep_abandoned
+# Grace before a lobby/created interview whose agent never dispatched/connected
+# gets force-ended — otherwise it has no turns to go stale on and, since it
+# never reaches "live", the console ledger's `ended_at IS NOT NULL` filter
+# hides it forever (2026-07-19 incident: candidate joined, LiveKit never
+# dispatched the agent into the room, interview sat in "lobby" indefinitely).
+_STALE_PRELIVE_SECONDS = 120
 
 
 async def sweep_abandoned(ctx: dict) -> None:
     """Paused interviews past rejoin grace → ended(abandoned); live/wrap_up with
-    stale activity > 90s → same. Uses last-turn time as the heartbeat proxy.
+    stale activity > 90s → same; created/lobby stuck > 120s (agent never
+    connected) → same. Uses last-turn time (or, pre-live, created_at) as the
+    heartbeat proxy.
 
     TODO(Phase-2): prefer the Redis live:{interview_id} heartbeat key (SPEC §9.4)
     over last-turn time for precision."""
@@ -36,7 +44,9 @@ async def sweep_abandoned(ctx: dict) -> None:
         actives = (
             (
                 await db.execute(
-                    select(Interview).where(Interview.status.in_(("live", "paused", "wrap_up")))
+                    select(Interview).where(
+                        Interview.status.in_(("created", "lobby", "live", "paused", "wrap_up"))
+                    )
                 )
             )
             .scalars()
@@ -58,8 +68,10 @@ async def sweep_abandoned(ctx: dict) -> None:
             grace = (req.interview_config or {}).get(  # type: ignore
                 "rejoin_grace_seconds", settings.rejoin_grace_seconds
             )
-            expired = (interview.status == "paused" and idle > grace) or (
-                interview.status in ("live", "wrap_up") and idle > _STALE_LIVE_SECONDS
+            expired = (
+                (interview.status == "paused" and idle > grace)
+                or (interview.status in ("live", "wrap_up") and idle > _STALE_LIVE_SECONDS)
+                or (interview.status in ("created", "lobby") and idle > _STALE_PRELIVE_SECONDS)
             )
             if not expired:
                 continue

@@ -207,9 +207,11 @@ def jobs(monkeypatch):
 
     import app.api.candidate as candidate_api
     import app.api.internal as internal_api
+    import app.jobs.sweepers as sweepers_jobs
 
     monkeypatch.setattr(candidate_api, "enqueue", _record)
     monkeypatch.setattr(internal_api, "enqueue", _record)
+    monkeypatch.setattr(sweepers_jobs, "enqueue", _record)
     return calls
 
 
@@ -228,11 +230,15 @@ def stub_object_storage(monkeypatch):
 
 @pytest.fixture
 def high_requisition_cap(monkeypatch):
-    """Lift the free-plan requisition cap: the seed already fills the default
-    org past it, and these tests aren't about quotas."""
+    """Lift the free-plan requisition cap AND the cumulative interview hold
+    (ER0402): the seed already fills the default org's requisition count past
+    the former, and the latter is a lifetime counter that repeated full-suite
+    runs against this same persistent dev DB eventually push past 50 too —
+    these tests aren't about quotas."""
     from app.core.config import settings
 
     monkeypatch.setattr(settings, "free_plan_max_requisitions", 10_000)
+    monkeypatch.setattr(settings, "free_plan_interview_hold_at", 10_000)
 
 
 @pytest.fixture
