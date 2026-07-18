@@ -175,7 +175,17 @@ class InterviewRunner:
             log.warning("publish_data_failed", error=str(exc))
 
     def on_conversation_item(self, ev) -> None:
-        """Sync handler for `conversation_item_added` — enqueue for ordered write."""
+        """Sync handler for `conversation_item_added` — enqueue for ordered write.
+
+        For the assistant, this event only fires once the turn's TTS audio has
+        *finished* forwarding (agent_activity.py plays out the full generation
+        before emitting it), so stamping started_at with "now" here lands near
+        the END of the turn — the review page then always shows the highlight
+        one turn behind the voice. Use the SDK's own start-of-speech timestamp
+        instead: `metrics.started_speaking_at` (first audio frame) for the
+        agent, falling back to `created_at` (set at message construction, i.e.
+        near the true start) for both roles.
+        """
         item = getattr(ev, "item", None)
         role = getattr(item, "role", None)
         text = (getattr(item, "text_content", None) or "").strip()
@@ -185,19 +195,21 @@ class InterviewRunner:
         if speaker == "candidate":
             self._candidate_turns += 1
         self._seq += 1
-        self._turns.put_nowait((self._seq, speaker, text))
+        started_at_epoch = (item.metrics.get("started_speaking_at") if item.metrics else None) or item.created_at
+        started_at = datetime.fromtimestamp(started_at_epoch, tz=UTC)
+        self._turns.put_nowait((self._seq, speaker, text, started_at))
 
     async def drain_turns(self) -> None:
         """Single consumer → guarantees monotonic seq to the backend."""
         while True:
-            seq, speaker, text = await self._turns.get()
+            seq, speaker, text, started_at = await self._turns.get()
             try:
                 await self.backend.create_turn(
                     self.interview_id,
                     seq=seq,
                     speaker=speaker,
                     text=text,
-                    started_at=datetime.now(UTC),
+                    started_at=started_at,
                 )
             except Exception as exc:  # noqa: BLE001
                 log.warning("create_turn_failed", seq=seq, error=str(exc))
