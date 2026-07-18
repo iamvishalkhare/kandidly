@@ -14,6 +14,7 @@ import {
   ChevronDown,
   Clock3,
   Copy,
+  Download,
   FileText,
   Gauge,
   Pause,
@@ -80,6 +81,43 @@ function formatTimeline(seconds: number) {
   const minutes = Math.floor(safeSeconds / 60);
   const remainder = safeSeconds % 60;
   return `${minutes}:${String(remainder).padStart(2, '0')}`;
+}
+
+function formatTranscriptSpeaker(turn: TranscriptTurn, candidateName: string) {
+  return turn.speaker === 'AI' ? 'Kandidly AI' : candidateName;
+}
+
+function safeFilenamePart(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function buildTranscriptText(interview: InterviewReviewData) {
+  const takenOn = interview.concludedAt
+    ? dateTimeFormatter.format(new Date(interview.concludedAt))
+    : 'Unavailable';
+  const lines = [
+    'Transcript',
+    `Candidate: ${interview.candidateName}`,
+    `Email: ${interview.candidateEmail ?? 'Unavailable'}`,
+    `Requisition: ${interview.requisitionId} - ${interview.requisitionTitle}`,
+    `Taken On: ${takenOn}`,
+    '',
+    ...interview.transcript.map(
+      turn => `[${turn.at}] ${formatTranscriptSpeaker(turn, interview.candidateName)}: ${turn.text}`,
+    ),
+  ];
+
+  return `${lines.join('\n')}\n`;
+}
+
+function transcriptFilename(interview: InterviewReviewData) {
+  const candidate = safeFilenamePart(interview.candidateName) || 'candidate';
+  const code = safeFilenamePart(interview.code ?? interview.id) || 'interview';
+  return `${candidate}-${code}-transcript.txt`;
 }
 
 function StatusPill({ status }: { status: string }) {
@@ -536,6 +574,18 @@ function AudioTranscript({
   const programmaticRef = useRef(false);
   const scrollIdleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const handleDownloadTranscript = () => {
+    const blob = new Blob([buildTranscriptText(interview)], { type: 'text/plain;charset=utf-8' });
+    const href = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = href;
+    anchor.download = transcriptFilename(interview);
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(href);
+  };
+
   // Manual scrolling suppresses auto-follow for a few seconds so the reader
   // isn't yanked back to the playhead mid-read.
   const handleScroll = () => {
@@ -572,9 +622,20 @@ function AudioTranscript({
 
   return (
     <section className="border border-outline-variant bg-surface">
-      <div className="border-b border-outline-variant px-4 py-3 flex items-center gap-2">
-        <FileText size={16} className="text-primary-fixed-dim" />
-        <h2 className="label-mono text-on-surface">Transcript</h2>
+      <div className="border-b border-outline-variant px-4 py-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 min-w-0">
+          <FileText size={16} className="shrink-0 text-primary-fixed-dim" />
+          <h2 className="label-mono text-on-surface">Transcript</h2>
+        </div>
+        <button
+          type="button"
+          onClick={handleDownloadTranscript}
+          className="inline-flex shrink-0 items-center gap-2 border border-outline-variant px-3 py-1.5 label-mono text-on-surface-variant hover:text-primary-fixed-dim hover:border-primary-container transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={interview.transcript.length === 0}
+        >
+          <Download size={14} />
+          Download .txt
+        </button>
       </div>
       <div
         ref={containerRef}
@@ -607,9 +668,9 @@ function AudioTranscript({
               )}
               <span
                 className="truncate"
-                title={turn.speaker === 'AI' ? 'Kandidly AI' : interview.candidateName}
+                title={formatTranscriptSpeaker(turn, interview.candidateName)}
               >
-                {turn.speaker === 'AI' ? 'Kandidly AI' : interview.candidateName}
+                {formatTranscriptSpeaker(turn, interview.candidateName)}
               </span>
             </div>
             <p className="text-on-surface">{turn.text}</p>
