@@ -227,6 +227,24 @@ export interface DevUser {
   token: string;
 }
 
+/** What the auth store persists. DevUser (seed picker) is the minimal shape;
+ * WorkOS logins add profile fields fetched from /api/auth/me. */
+export interface StoredAuthUser extends DevUser {
+  display_name?: string | null;
+  avatar_url?: string | null;
+  org_id?: string | null;
+}
+
+/** GET /api/auth/me */
+export interface MeOut {
+  id: string;
+  email: string;
+  role: string;
+  org_id: string | null;
+  display_name: string | null;
+  avatar_url: string | null;
+}
+
 // --- Account & usage (console profile modal) ---
 export interface AccountOut {
   name: string;

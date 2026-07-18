@@ -1,6 +1,8 @@
-"""Auth integration contract (SPEC §3.6). The auth/user system is external and
-assumed to exist; this module only *verifies* an incoming JWT and resolves an
-`AuthUser`. In dev (`AUTH_DEV_MODE=true`) an unsigned debug token is accepted."""
+"""App auth tokens (supersedes SPEC §3.6's external-IdP contract). Identity
+comes from WorkOS AuthKit (app/api/auth.py), but the bearer token the app
+verifies is our OWN HS256 JWT minted at the auth callback — so everything
+downstream (deps.py, role guards, logout denylist) never touches WorkOS.
+Unsigned dev debug tokens are still accepted, but only in env == "dev"."""
 
 from __future__ import annotations
 
@@ -8,6 +10,7 @@ import json
 import secrets
 from base64 import urlsafe_b64decode
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 from uuid import UUID
 
@@ -24,6 +27,22 @@ class AuthUser:
     user_id: UUID
     email: str
     role: Role
+    org_id: UUID | None = None
+
+
+def mint_app_jwt(*, user_id: UUID, email: str, role: str, org_id: UUID | None) -> str:
+    """Bearer JWT handed to the SPA after the AuthKit callback. Claim shape
+    matches what verify_jwt resolves (sub/email/role/org_id)."""
+    now = datetime.now(UTC)
+    payload = {
+        "sub": str(user_id),
+        "email": email,
+        "role": role,
+        "org_id": str(org_id) if org_id else None,
+        "iat": now,
+        "exp": now + timedelta(seconds=settings.jwt_ttl_s),
+    }
+    return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
 
 
 def _decode_dev_token(token: str) -> dict:
@@ -35,24 +54,35 @@ def _decode_dev_token(token: str) -> dict:
 def verify_jwt(token: str) -> AuthUser:
     """Verify a bearer token and return the resolved user. Raises AppError(401)."""
     try:
-        if settings.auth_dev_mode:
+        payload = jwt.decode(
+            token,
+            settings.jwt_secret,
+            algorithms=["HS256"],
+            options={"require": ["sub", "exp"]},
+        )
+    except jwt.InvalidTokenError as jwt_exc:
+        # Unsigned dev tokens (seed picker, API test suite) never parse as a
+        # signed JWT; they are honored in dev ONLY — prod rejects them even
+        # with AUTH_DEV_MODE accidentally on.
+        if not (settings.auth_dev_mode and settings.is_dev):
+            raise AppError("unauthorized", "Invalid or expired token") from jwt_exc
+        try:
             payload = _decode_dev_token(token)
-        else:
-            payload = jwt.decode(
-                token,
-                settings.jwt_public_key,
-                algorithms=[settings.jwt_alg],
-                options={"require": ["sub"]},
-            )
-    except Exception as exc:  # noqa: BLE001
-        raise AppError("unauthorized", "Invalid or expired token") from exc
+        except Exception as exc:  # noqa: BLE001
+            raise AppError("unauthorized", "Invalid or expired token") from exc
 
     user_id = payload.get("user_id") or payload.get("sub")
     email = payload.get("email")
     role = payload.get("role")
+    org_id = payload.get("org_id")
     if not user_id or role not in ("admin", "recruiter", "candidate"):
         raise AppError("unauthorized", "Token missing required claims")
-    return AuthUser(user_id=UUID(str(user_id)), email=email or "", role=role)
+    return AuthUser(
+        user_id=UUID(str(user_id)),
+        email=email or "",
+        role=role,
+        org_id=UUID(str(org_id)) if org_id else None,
+    )
 
 
 def verify_service_token(provided: str | None) -> None:

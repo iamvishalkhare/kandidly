@@ -1,17 +1,25 @@
 /**
  * /i/:token — Invite landing page.
- * Resolves the link, shows errors for invalid states,
- * lets a dev pick a candidate account, claims the link, then routes by state.
+ * Resolves the link, shows errors for invalid states, then claims it.
+ *
+ * Candidates must be signed in (WorkOS AuthKit) before claiming: "Start
+ * Application" redirects through /api/auth/login?intent=candidate with
+ * return_to=/i/:token?autostart=1, and on return the page auto-claims. For
+ * `personal` invites the backend additionally checks the signed-in email
+ * against the invited email at claim time. Dev builds keep the seeded-account
+ * picker as a shortcut.
  */
 
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ArrowRight, AlertCircle, Clock, XCircle, Lock, ChevronRight } from 'lucide-react';
-import { publicApi, candidateApi } from '../../lib/api';
-import { setAuth, clearAuth } from '../../lib/auth';
+import { publicApi, candidateApi, authApi } from '../../lib/api';
+import { getUser, setAuth, clearAuth, subscribeAuth } from '../../lib/auth';
 import { Button, Spinner } from '../../components/ui';
 import type { DevUser, LinkResolveOut } from '../../lib/types';
+
+const IS_DEV_BUILD = Boolean((import.meta as { env: Record<string, string | boolean> }).env.DEV);
 
 // Map reason codes to friendly messages
 function ErrorPanel({ reason }: { reason: string | null }) {
@@ -113,7 +121,11 @@ function routeByState(applicationId: string, state: string, navigate: ReturnType
 export default function CandidateLanding() {
   const { token } = useParams<{ token: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [showPicker, setShowPicker] = useState(false);
+  const [user, setUser] = useState(getUser);
+  useEffect(() => subscribeAuth(() => setUser(getUser())), []);
+  const signedInCandidate = user?.role === 'candidate' ? user : null;
 
   const { data: link, isPending, error } = useQuery<LinkResolveOut>({
     queryKey: ['link', token],
@@ -121,30 +133,50 @@ export default function CandidateLanding() {
     enabled: !!token,
   });
 
+  const startLogin = () => {
+    window.location.href = authApi.loginUrl('candidate', `/i/${token}?autostart=1`);
+  };
+
   const claimMutation = useMutation({
     mutationFn: () => candidateApi.claim(token!),
     onSuccess: data => {
       routeByState(data.application_id, data.state, navigate);
     },
     onError: err => {
-      const code = (err as { response?: { data?: { code?: string } } })?.response?.data?.code;
-      if (code === 'forbidden') {
-        // A non-candidate token (e.g. a recruiter/admin session left in
-        // localStorage) can't claim — drop it and let them pick a candidate.
+      const data = (err as { response?: { data?: { code?: string; detail?: { reason?: string } } } })
+        ?.response?.data;
+      // An email-mismatched candidate stays signed in — the error panel offers
+      // an account switch. A non-candidate session (recruiter/admin) can never
+      // claim: drop it so they can sign in with a candidate account.
+      if (data?.code === 'forbidden' && data?.detail?.reason !== 'email_mismatch') {
         clearAuth();
-        setShowPicker(true);
+        if (IS_DEV_BUILD) setShowPicker(true);
       }
     },
   });
 
+  // Return leg of the sign-in redirect: claim without another click.
+  const autoClaimed = useRef(false);
+  useEffect(() => {
+    if (searchParams.get('autostart') === '1' && signedInCandidate && !autoClaimed.current) {
+      autoClaimed.current = true;
+      claimMutation.mutate();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signedInCandidate?.token]);
+
   // Extract a friendly message from a claim failure. The backend returns the
-  // standard envelope { code, message } (backend/app/core/errors.py); a link
-  // that lapsed between resolve and claim comes back as `link_invalid`.
+  // standard envelope { code, message, detail } (backend/app/core/errors.py);
+  // a link that lapsed between resolve and claim comes back as `link_invalid`.
   const claimErrorMessage = (): string => {
     const err = claimMutation.error as
       | {
           response?: {
-            data?: { code?: string; message?: string; detail?: { error_code?: string } };
+            data?: {
+              code?: string;
+              message?: string;
+              detail?: { error_code?: string; reason?: string };
+            };
           };
         }
       | undefined;
@@ -157,32 +189,59 @@ export default function CandidateLanding() {
       const code = data.detail?.error_code ?? 'ER0402';
       return `${data.message || 'This interview is on hold. Please contact your recruiter for more details.'} (Error code: ${code})`;
     }
+    if (data?.code === 'forbidden' && data.detail?.reason === 'email_mismatch') {
+      return 'This invite was sent to a different email address. Switch to the account that received the invitation to continue.';
+    }
     if (data?.code === 'forbidden') {
-      return 'That account can’t apply — choose a candidate account below to continue.';
+      return IS_DEV_BUILD
+        ? 'That account can’t apply — choose a candidate account below to continue.'
+        : 'That account can’t apply — sign in with a candidate account to continue.';
     }
     return 'Something went wrong. Please try again.';
   };
 
-  const handleStart = () => {
-    // Dev flow: always show the account picker so a fresh run is one click away
-    // (no localStorage clearing). Picking resets that candidate's prior app.
-    setShowPicker(true);
+  const claimFailedEmailMismatch = (() => {
+    const err = claimMutation.error as
+      | { response?: { data?: { code?: string; detail?: { reason?: string } } } }
+      | undefined;
+    const data = err?.response?.data;
+    return data?.code === 'forbidden' && data.detail?.reason === 'email_mismatch';
+  })();
+
+  const switchAccount = async () => {
+    try {
+      await authApi.logout(); // best-effort server-side revoke
+    } catch {
+      /* clearing locally is what matters here */
+    }
+    clearAuth();
+    startLogin();
   };
 
-  const handlePickUser = async (user: DevUser) => {
-    setAuth(user);
+  const handleStart = () => {
+    if (signedInCandidate) {
+      claimMutation.mutate();
+      return;
+    }
+    if (IS_DEV_BUILD) {
+      // Dev flow: offer the seeded-account picker (one-click fresh runs) with
+      // the real sign-in available underneath it.
+      setShowPicker(true);
+      return;
+    }
+    startLogin();
+  };
+
+  const handlePickUser = async (picked: DevUser) => {
+    setAuth(picked);
     setShowPicker(false);
     // Dev convenience: abandon any prior application for this link+candidate so
-    // every pick starts a brand-new interview instead of resuming to "Thank you".
-    // Dev-only: in prod the edge gates /api/public/dev-reset behind Basic auth
-    // (infra/Caddyfile.prod @staff), so calling it pops a browser sign-in dialog
-    // at the candidate, and the 401 clears the just-picked session (api.ts).
-    if ((import.meta as { env: Record<string, string> }).env.DEV) {
-      try {
-        await publicApi.devReset(token!, user.email);
-      } catch {
-        /* best-effort — proceed even if reset is unavailable */
-      }
+    // every pick starts a brand-new interview instead of resuming to "Thank
+    // you". Backend 404s the endpoint outside dev.
+    try {
+      await publicApi.devReset(token!, picked.email);
+    } catch {
+      /* best-effort — proceed even if reset is unavailable */
     }
     claimMutation.mutate();
   };
@@ -258,29 +317,65 @@ export default function CandidateLanding() {
           </ul>
         </div>
 
-        {/* Dev user picker */}
+        {/* Dev user picker (dev builds only) */}
         {showPicker && (
-          <DevUserPicker onPick={handlePickUser} />
+          <div className="space-y-3">
+            <DevUserPicker onPick={handlePickUser} />
+            <button
+              onClick={startLogin}
+              className="w-full text-xs text-center underline underline-offset-2"
+              style={{ color: 'var(--text-muted)' }}
+            >
+              Or sign in with a real account
+            </button>
+          </div>
         )}
 
         {/* CTA */}
         {!showPicker && (
-          <Button
-            variant="primary"
-            size="lg"
-            className="w-full"
-            loading={claimMutation.isPending}
-            onClick={handleStart}
-          >
-            Start Application
-            <ArrowRight size={16} />
-          </Button>
+          <div className="space-y-3">
+            <Button
+              variant="primary"
+              size="lg"
+              className="w-full"
+              loading={claimMutation.isPending}
+              onClick={handleStart}
+            >
+              Start Application
+              <ArrowRight size={16} />
+            </Button>
+            {!signedInCandidate && (
+              <p className="text-xs text-center" style={{ color: 'var(--text-muted)' }}>
+                You’ll be asked to sign in first — we use your name, photo and
+                email to identify you to the recruiter.
+              </p>
+            )}
+            {signedInCandidate && (
+              <p className="text-xs text-center" style={{ color: 'var(--text-muted)' }}>
+                Signed in as {signedInCandidate.email} ·{' '}
+                <button
+                  onClick={switchAccount}
+                  className="underline underline-offset-2"
+                  style={{ color: 'var(--text-secondary)' }}
+                >
+                  Switch account
+                </button>
+              </p>
+            )}
+          </div>
         )}
 
         {claimMutation.isError && (
-          <p className="text-xs text-center text-red-400">
-            {claimErrorMessage()}
-          </p>
+          <div className="space-y-2">
+            <p className="text-xs text-center text-red-400">
+              {claimErrorMessage()}
+            </p>
+            {claimFailedEmailMismatch && (
+              <Button variant="outline" size="sm" className="w-full" onClick={switchAccount}>
+                Switch account
+              </Button>
+            )}
+          </div>
         )}
       </div>
     </CenteredLayout>

@@ -5,7 +5,7 @@
  * components can subscribe to changes.
  */
 
-import type { DevUser } from './types';
+import type { StoredAuthUser } from './types';
 
 const TOKEN_KEY = 'kandidly_token';
 const USER_KEY  = 'kandidly_user';
@@ -15,10 +15,10 @@ const listeners = new Set<Listener>();
 
 // Cached snapshots so useSyncExternalStore gets stable references.
 let _cachedToken: string | null = localStorage.getItem(TOKEN_KEY);
-let _cachedUser: DevUser | null = (() => {
+let _cachedUser: StoredAuthUser | null = (() => {
   try {
     const raw = localStorage.getItem(USER_KEY);
-    return raw ? (JSON.parse(raw) as DevUser) : null;
+    return raw ? (JSON.parse(raw) as StoredAuthUser) : null;
   } catch {
     return null;
   }
@@ -29,7 +29,7 @@ function notify() {
   _cachedToken = localStorage.getItem(TOKEN_KEY);
   try {
     const raw = localStorage.getItem(USER_KEY);
-    _cachedUser = raw ? (JSON.parse(raw) as DevUser) : null;
+    _cachedUser = raw ? (JSON.parse(raw) as StoredAuthUser) : null;
   } catch {
     _cachedUser = null;
   }
@@ -45,11 +45,11 @@ export function getToken(): string | null {
   return _cachedToken;
 }
 
-export function getUser(): DevUser | null {
+export function getUser(): StoredAuthUser | null {
   return _cachedUser;
 }
 
-export function setAuth(user: DevUser): void {
+export function setAuth(user: StoredAuthUser): void {
   localStorage.setItem(TOKEN_KEY, user.token);
   localStorage.setItem(USER_KEY, JSON.stringify(user));
   notify();

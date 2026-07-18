@@ -6,22 +6,9 @@
 # lives there, with api./files. nested one level deeper).
 # {$VAR} placeholders resolve from the container environment (infra/.env.prod).
 #
-# ── TEMPORARY console gate — remove when WorkOS auth lands ────────────────────
-# App auth is still the dev-token scheme (unsigned base64 JSON — forgeable), so
-# the console must not be reachable anonymously. The app itself uses
-# `Authorization: Bearer`, which rules out plain basic_auth on the API paths
-# (one Authorization header per request). Instead:
-#   1. basic_auth guards the console SPA routes; passing it sets a domain-wide
-#      HttpOnly gate cookie (browser prompts once per session).
-#   2. api.$DOMAIN requires that cookie on /api/admin/* (Basic also accepted
-#      there for curl/CI, which don't carry a Bearer token).
-#   3. /api/public/dev-users only reveals staff tokens when Caddy asserts
-#      X-Console-Gate after validating the cookie; inbound copies of the
-#      header are always stripped, so only this proxy can assert it.
-# Candidate surfaces (/i/*, /apply/*, /api/candidate/*, /api/public/*) stay
-# open. `route` blocks are deliberate: they run directives in written order,
-# so the 401 short-circuits BEFORE the Set-Cookie header is attached, and the
-# path matchers see the original URL (not the try_files rewrite).
+# Auth is WorkOS AuthKit → app-minted JWT (backend/app/api/auth.py); the edge
+# no longer gates the console. (The pre-WorkOS basicauth console gate lived
+# here until 2026-07-18 — see git history if it ever needs resurrecting.)
 {
 	email {$ACME_EMAIL}
 	# TCP-only edge: the EC2 security group doesn't pass UDP 443, but Caddy
@@ -42,12 +29,6 @@
 	route {
 		root * /srv
 
-		basic_auth /console* {
-			{$CONSOLE_GATE_USER} {$CONSOLE_GATE_HASH}
-		}
-		# Domain=$DOMAIN makes the cookie cover api.$DOMAIN too.
-		header /console* Set-Cookie "kandidly_gate={$CONSOLE_GATE_COOKIE}; Domain={$DOMAIN}; Path=/; Max-Age=43200; Secure; HttpOnly; SameSite=Lax"
-
 		# SPA fallback: client-routed paths resolve to index.html.
 		try_files {path} /index.html
 		file_server
@@ -61,23 +42,6 @@ api.{$DOMAIN} {
 		# Service-to-service and ops surfaces are never internet-facing.
 		@blocked path /internal/* /metrics /metrics/* /docs /redoc /openapi.json
 		respond @blocked 404
-
-		# Only this proxy may assert the console gate to the backend.
-		request_header -X-Console-Gate
-		@gated header Cookie *kandidly_gate={$CONSOLE_GATE_COOKIE}*
-		request_header @gated X-Console-Gate 1
-
-		# Staff API: gate cookie (browser) or Basic (curl/CI). OPTIONS stays
-		# open — CORS preflights carry no credentials by spec, and FastAPI's
-		# CORS middleware answers them.
-		@staff {
-			path /api/admin/* /api/public/dev-reset
-			not header Cookie *kandidly_gate={$CONSOLE_GATE_COOKIE}*
-			not method OPTIONS
-		}
-		basic_auth @staff {
-			{$CONSOLE_GATE_USER} {$CONSOLE_GATE_HASH}
-		}
 
 		reverse_proxy backend:8000
 	}

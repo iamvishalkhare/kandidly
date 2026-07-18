@@ -1,7 +1,7 @@
 # Kandidly — single-EC2 production deployment runbook
 
 Prod runs the whole stack on one EC2 instance with Docker Compose:
-Caddy (TLS + routing + the temporary console gate), backend (FastAPI), worker
+Caddy (TLS + routing), backend (FastAPI), worker
 (arq), agent (LiveKit voice), Postgres 16, Redis 7, MinIO. Rooms and realtime
 STT/LLM/TTS come from **LiveKit Cloud** (a dedicated prod project).
 
@@ -22,7 +22,7 @@ Files that make up the deployment:
 | File | Role |
 |---|---|
 | `infra/compose.prod.yml` | standalone prod stack (no bind mounts, no dev servers) |
-| `infra/Caddyfile.prod` | TLS, subdomain routing, **temporary console gate** |
+| `infra/Caddyfile.prod` | TLS, subdomain routing |
 | `infra/.env.prod.example` | template for `infra/.env.prod` (server-only, chmod 600) |
 | `infra/deploy.sh` | the deploy contract: pull → build → migrate → up → health check |
 | `web/Dockerfile.prod` | multi-stage: Vite build → static bundle in the Caddy image |
@@ -130,11 +130,14 @@ Fill in every value — the template documents each one. Highlights:
 
 - `DOMAIN`, `ACME_EMAIL`, `VITE_API_BASE=https://api.DOMAIN`
 - Random secrets: `POSTGRES_PASSWORD`, `MINIO_ROOT_PASSWORD` (=
-  `KANDIDLY_S3_SECRET_KEY`), `KANDIDLY_SERVICE_TOKEN`, `CONSOLE_GATE_COOKIE`
+  `KANDIDLY_S3_SECRET_KEY`), `KANDIDLY_SERVICE_TOKEN`, `KANDIDLY_JWT_SECRET`
   — all via `openssl rand -hex 32`. Remember `KANDIDLY_DATABASE_URL` embeds
   the Postgres password literally (no `${}` expansion in env files).
-- `CONSOLE_GATE_HASH`:
-  `docker run --rm docker.io/library/caddy:2.10 caddy hash-password --plaintext 'YOUR-PASSWORD'`
+- WorkOS **production environment** keys (`KANDIDLY_WORKOS_API_KEY`,
+  `KANDIDLY_WORKOS_CLIENT_ID`) and
+  `KANDIDLY_WORKOS_REDIRECT_URI=https://api.DOMAIN/api/auth/callback` — the
+  same URI must be allowlisted in the WorkOS dashboard under Redirects, and
+  Google OAuth / email+password / magic link enabled under Authentication.
 - LiveKit Cloud **prod project** URL/key/secret; enable the three
   `KANDIDLY_INFERENCE_*` models on that project (agent joins but stays silent
   if a model id isn't enabled).
@@ -220,54 +223,43 @@ container name.)
 Restore drill (do this once): `pg_restore -U kandidly -d kandidly --clean <dump>`
 into a scratch database and sanity-check row counts.
 
-## 7. ⚠ TEMPORARY security stopgap (until WorkOS)
+## 7. Auth (WorkOS AuthKit)
 
-App auth is still the **dev-token scheme**: an unsigned base64 JSON payload
-anyone can forge (`KANDIDLY_AUTH_DEV_MODE=true` in prod). Until WorkOS lands,
-the Caddy edge is the actual security boundary:
+Sign-in is WorkOS AuthKit's hosted UI (Google OAuth, email+password, magic
+link); the backend exchanges the callback code, JIT-provisions the user, and
+mints its own HS256 JWT (`KANDIDLY_JWT_SECRET`) — see
+`backend/app/api/auth.py`. Notes specific to prod:
 
-- `DOMAIN/console*` → **basicauth** (`CONSOLE_GATE_USER`/`_HASH`). Passing
-  it sets a domain-wide `HttpOnly` gate cookie (`CONSOLE_GATE_COOKIE`).
-- `api.DOMAIN/api/admin/*` (includes `/api/admin/console/*`) → requires the
-  gate cookie; plain basicauth also accepted for curl/CI. Plain basicauth on
-  these paths alone can't work for the SPA — the app already uses the
-  `Authorization` header for its Bearer token, hence the cookie.
-- `/api/public/dev-users` → staff (admin/recruiter) tokens are only included
-  when Caddy asserts the gate (`X-Console-Gate`, stripped from all inbound
-  requests). Candidate accounts stay listed — the landing-page picker needs
-  them. `/api/public/dev-reset` is gated.
+- Dev debug tokens are rejected outright (`KANDIDLY_ENV=prod`), and
+  `KANDIDLY_AUTH_DEV_MODE=false` hides `/api/public/dev-users`. The old Caddy
+  basicauth console gate is gone (removed 2026-07-18; git history has it).
+- A brand-new console signup gets its **own fresh Organization** (never the
+  seeded default org); new candidate signups are org-less. Invite-only
+  (`personal`) links additionally require the signed-in email to match the
+  invited email at claim time.
 - `/internal/*`, `/metrics`, `/docs`, `/redoc`, `/openapi.json` → 404 at the
   edge; only the compose network reaches them.
-- Candidate surfaces stay open: `/i/*`, `/apply/*`, `/api/candidate/*`,
-  `/api/public/*` (guarded by rate limits + reCAPTCHA + link validity).
-
-**Residual risk, accepted knowingly:**
-
-- Candidate-role tokens are self-forgeable; candidate endpoints validate
-  ownership by user id, so the blast radius is a candidate's own application.
-- Anyone with an invite link can interview as the shared test-candidate
-  account. Real multi-candidate hiring needs per-candidate accounts —
-  don't share invite links beyond controlled tests until WorkOS.
-- The bootstrap admin token printed by seed_prod is a permanent credential
-  (until logout-revoked). Treat it like a root password.
-
-**Rotation:** change `CONSOLE_GATE_COOKIE`/`CONSOLE_GATE_HASH` in `.env.prod`,
-then `docker compose -f infra/compose.prod.yml up -d caddy`. Remove this whole
-section (and the Caddyfile gate block, the `dev_users` gating in
-`backend/app/api/public.py`, and `KANDIDLY_AUTH_DEV_MODE`) when WorkOS lands.
+- Candidate surfaces stay open until claim: `/i/*`, `/api/public/*` (rate
+  limits + reCAPTCHA + link validity); `/api/candidate/*` requires a
+  candidate login.
+- **Rotation:** change `KANDIDLY_JWT_SECRET` in `.env.prod`, then
+  `docker compose -f infra/compose.prod.yml up -d backend worker` — this
+  invalidates every outstanding session. Rotate WorkOS keys from the
+  dashboard and update `.env.prod` the same way.
 
 ## 8. End-to-end verification (run after every first-class deploy)
 
 1. `https://api.DOMAIN/healthz` → `{"status":"ok","env":"prod"}` (deploy.sh
    already asserted this).
-2. `https://DOMAIN/console` → basicauth prompt → login screen lists the
-   bootstrap admin (and **no** staff accounts when opened in a private window
-   without basicauth).
+2. `https://DOMAIN/console` → Sign in → AuthKit hosted page → back in the
+   console. A fresh email lands in its own new org (empty dashboard); the
+   bootstrap admin sees the existing data.
 3. Console → create a requisition (template + rubric + deploy), copy the
    invite link.
-4. Open the invite link in a private window: landing resolves, pick the test
-   candidate, complete the form (resume upload exercises MinIO + the parse
-   job; requires reCAPTCHA to pass), reach the lobby.
+4. Open the invite link in a private window: landing resolves, Start
+   Application → AuthKit sign-in as a candidate, complete the form (resume
+   upload exercises MinIO + the parse job; requires reCAPTCHA to pass),
+   reach the lobby.
 5. Lobby → camera/mic check → start the interview: the agent should greet you
    within ~10s (LiveKit Cloud prod project; if it joins silently, check the
    `KANDIDLY_INFERENCE_*` models are enabled on the project).

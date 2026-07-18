@@ -29,6 +29,16 @@ class LinkResolveOut(BaseModel):
     reason: str | None = None
 
 
+# --- auth -------------------------------------------------------------------
+class MeOut(BaseModel):
+    id: UUID
+    email: str
+    role: str
+    org_id: UUID | None = None
+    display_name: str | None = None
+    avatar_url: str | None = None
+
+
 # --- candidate (SPEC §12.2) ------------------------------------------------
 class ClaimOut(BaseModel):
     application_id: UUID

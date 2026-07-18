@@ -410,7 +410,9 @@ async def set_requisition_status(
     db: AsyncSession = Depends(get_db),
 ) -> RequisitionOut:
     r = await db.get(Requisition, req_id)
-    if r is None or r.deleted_at is not None:
+    # Cross-tenant 404: console-reachable write, so another org's requisition
+    # must look exactly like a missing one (open signup, 2026-07-18).
+    if r is None or r.deleted_at is not None or r.org_id != await _org_id_for(db, user):
         raise AppError("not_found", "Requisition not found")
     target = body.status
     allowed = {
@@ -725,7 +727,9 @@ async def review_report(
     from app.domain.applications import transition
 
     interview = await db.get(Interview, interview_id)
-    if interview is None:
+    req = await db.get(Requisition, interview.requisition_id) if interview else None
+    # Cross-tenant 404 (console-reachable write; see set_requisition_status).
+    if interview is None or req is None or req.org_id != await _org_id_for(db, user):
         raise AppError("not_found", "Interview not found")
     report = (
         await db.execute(select(Report).where(Report.interview_id == interview_id))

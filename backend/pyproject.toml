@@ -33,6 +33,7 @@ dependencies = [
     "pytesseract>=0.3.13",           # OCR fallback for scanned PDFs
     "pillow>=11.0",
     "psycopg[binary]>=3.3.4",
+    "workos>=5.0",
 ]
 
 [project.optional-dependencies]

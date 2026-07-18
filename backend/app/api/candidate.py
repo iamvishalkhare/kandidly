@@ -73,7 +73,13 @@ async def claim(
         raise AppError("link_invalid", "Invite link is not usable", detail={"reason": res.reason})
 
     if link.kind == "personal" and (link.email or "").lower() != user.email.lower():
-        raise AppError("forbidden", "This invite is for a different email")
+        # detail.reason lets the SPA distinguish "signed in with the wrong
+        # email" (offer account switch) from a role-based 403.
+        raise AppError(
+            "forbidden",
+            "This invite is for a different email",
+            detail={"reason": "email_mismatch"},
+        )
 
     # Free-plan hold: once the org's cumulative interview count hits the
     # threshold, every new attempt is refused with ER0402 (402).
