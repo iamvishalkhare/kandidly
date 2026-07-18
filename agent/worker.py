@@ -43,7 +43,11 @@ LANGUAGE = os.environ.get("KANDIDLY_LANGUAGE", "en")
 
 
 def _interview_id_from_room(room_name: str) -> str:
-    return room_name[len(ROOM_PREFIX):] if room_name.startswith(ROOM_PREFIX) else room_name
+    return (
+        room_name[len(ROOM_PREFIX) :]
+        if room_name.startswith(ROOM_PREFIX)
+        else room_name
+    )
 
 
 def _export_livekit_env() -> None:
@@ -81,9 +85,14 @@ def _background_section(ctx: dict) -> str:
             continue
         gh, dig = s.get("github") or {}, s.get("digest") or {}
         if gh:
-            repos = ", ".join(r["name"] for r in (gh.get("top_repos") or [])[:4] if r.get("name"))
+            repos = ", ".join(
+                r["name"] for r in (gh.get("top_repos") or [])[:4] if r.get("name")
+            )
             bio = f" Bio: {gh['bio']}." if gh.get("bio") else ""
-            lines.append(f"GitHub (@{gh.get('login')}):{bio}" + (f" Repos: {repos}." if repos else ""))
+            lines.append(
+                f"GitHub (@{gh.get('login')}):{bio}"
+                + (f" Repos: {repos}." if repos else "")
+            )
         elif dig:
             tech = ", ".join(dig.get("technologies") or [])
             lines.append(
@@ -91,7 +100,9 @@ def _background_section(ctx: dict) -> str:
                 + (f" Tech: {tech}." if tech else "")
             )
         elif s.get("text"):
-            lines.append(f"{s.get('kind', 'source').capitalize()} ({s.get('url')}): {s['text'][:300]}")
+            lines.append(
+                f"{s.get('kind', 'source').capitalize()} ({s.get('url')}): {s['text'][:300]}"
+            )
 
     key_answers = [
         f"{k}: {(v or {}).get('value')}"
@@ -114,47 +125,113 @@ def _background_section(ctx: dict) -> str:
     return out
 
 
-def _build_instructions(boot: dict) -> str:
+# Share of the clock reserved for the greeting and the wrap-up, i.e. not
+# available to topic questioning when computing advisory per-topic budgets.
+GREET_WRAP_RESERVE = 0.15
+
+_DEFAULT_QUESTIONS = [
+    "Tell me about your background and a recent project you're proud of.",
+    "Walk me through a technical challenge you solved recently and how you approached it.",
+    "How do you debug a tricky production issue under time pressure?",
+]
+
+
+def _topic_budgets(nodes: list[dict], max_seconds: int) -> list[tuple[str, int]]:
+    """Pair each planned topic question with an advisory minute budget.
+
+    The plan's per-node soft budgets are drawn against the requisition default,
+    so scale them proportionally to THIS interview's clock (minus the
+    greeting/wrap reserve). Even split when any budget is missing."""
+    topics = [
+        (n["seed_question"], n.get("soft_budget_seconds"))
+        for n in nodes
+        if n.get("seed_question")
+        and n.get("node_type") not in ("wrap", "candidate_questions")
+    ]
+    if not topics:
+        topics = [(q, None) for q in _DEFAULT_QUESTIONS]
+    available = max(60, int(max_seconds * (1 - GREET_WRAP_RESERVE)))
+    budgets = [b for _, b in topics]
+    if all(budgets):
+        total = sum(budgets)
+        scaled = [b * available / total for b in budgets]
+    else:
+        scaled = [available / len(topics)] * len(topics)
+    return [(q, max(1, round(s / 60))) for (q, _), s in zip(topics, scaled)]
+
+
+def _build_instructions(boot: dict, max_seconds: int) -> str:
     """Assemble the interviewer system prompt from the bootstrapped plan."""
     nodes = boot.get("nodes") or []
     cfg = boot.get("config") or {}
     tone = cfg.get("tone") or "conversational"
-    questions = [
-        n["seed_question"]
-        for n in nodes
-        if n.get("seed_question") and n.get("node_type") not in ("wrap", "candidate_questions")
-    ]
-    if not questions:
-        questions = [
-            "Tell me about your background and a recent project you're proud of.",
-            "Walk me through a technical challenge you solved recently and how you approached it.",
-            "How do you debug a tricky production issue under time pressure?",
-        ]
-    q_lines = "\n".join(f"{i + 1}. {q}" for i, q in enumerate(questions))
+    total_min = max(1, round(max_seconds / 60))
+    q_lines = "\n".join(
+        f"{i + 1}. (about {m} min) {q}"
+        for i, (q, m) in enumerate(_topic_budgets(nodes, max_seconds))
+    )
     background = _background_section(boot.get("context") or {})
-    return f"""You are Kandidly, a warm, professional AI voice interviewer running a short spoken screening interview.
+    return f"""You are Kandidly, a warm, professional AI voice interviewer running a spoken screening interview of about {total_min} minutes.
 
 # Speaking style (text-to-speech)
 - You are speaking aloud. Reply in plain conversational text only — never markdown, lists, code, or emojis.
 - Keep each turn to one to three sentences. Ask ONE question at a time, then stop and let the candidate answer.
-- Be encouraging and natural: briefly acknowledge each answer before moving on, and ask at most one short follow-up when an answer is thin or interesting.
+- Be encouraging and natural: briefly acknowledge each answer before moving on.
 - Maintain a {tone} tone.
 
-# Interview plan — cover these topics in order
+# Interview plan — cover these topics in order (minute figures are advisory budgets, not hard stops)
 {q_lines}
 {background}
+# Time management
+- A bracketed [Time check …] note appears before your turns with elapsed and remaining time. It is internal — never read it aloud or mention the timer — but always let it drive your pacing.
+- Use the whole interview: do not end early while planned topics remain or meaningful time is left, and do not run past the clock.
+- Budget so EVERY topic above is asked before the interview ends: the candidate is scored on each topic, and a topic never asked scores zero.
+- On or ahead of schedule, go deeper instead of finishing early: ask probing follow-ups on what the candidate just said (their exact role, specifics, trade-offs, what went wrong), and pull in concrete pointers from their resume and application answers above. Prefer depth on the current topic over inventing new topics.
+- Behind schedule, stop probing and move on: ask one brief question per remaining topic. Make those questions slightly specific and narrowly scoped — anchor them in a technology or situation from the candidate's background — rather than broad open-ended ones, so even a short answer gives scoreable signal.
+- Never pad the interview with filler or small talk.
+
 # Flow
-- Open by greeting the candidate, introducing yourself as Kandidly in one sentence, and saying this is a short voice screening. Then ask the first question.
+- Open by greeting the candidate, introducing yourself as Kandidly in one sentence, and saying this is a voice screening of about {total_min} minutes. Then ask the first question.
 - Work through the topics in order with natural transitions. Do not dump all questions at once.
-- Budget your time so EVERY topic above gets asked before the interview ends — the candidate is scored on each one, and a topic never asked scores zero. If time is running short, move on and ask one brief, targeted question per remaining topic instead of going deeper on the current one.
-- When the topics are covered, thank the candidate warmly, tell them the hiring team will be in touch, and then stop talking.
+- When the time check says you are in the wrap-up window, finish quickly: one quick, specific question per topic not yet asked, then close.
+- To close, thank the candidate warmly, tell them the hiring team will be in touch, and then stop talking.
 """
+
+
+def _fmt_span(seconds: int) -> str:
+    return f"{seconds} sec" if seconds < 120 else f"{seconds // 60} min"
+
+
+def _time_note(elapsed: int, remaining: int, wrap_trigger: int) -> str:
+    """One-line internal pacing note injected before each interviewer reply —
+    the LLM has no clock, so time-awareness must ride the context (SPEC §8.7)."""
+    if remaining <= 60:
+        directive = (
+            "Time is up: give one warm closing sentence now — thank the candidate, "
+            "say the hiring team will be in touch, and stop."
+        )
+    elif remaining <= wrap_trigger:
+        directive = (
+            "Wrap-up window: ask at most one quick, specific question per topic "
+            "not yet covered, then close warmly."
+        )
+    else:
+        directive = (
+            "Pace so every remaining topic gets asked; if ahead of schedule, probe "
+            "deeper with specific follow-ups instead of ending early."
+        )
+    return (
+        f"[Time check — internal, never read aloud: {_fmt_span(elapsed)} elapsed, "
+        f"{_fmt_span(remaining)} remaining. {directive}]"
+    )
 
 
 class InterviewRunner:
     """Holds per-interview state and wires the AgentSession to the backend."""
 
-    def __init__(self, ctx, backend: BackendClient, interview_id: str, max_seconds: int):
+    def __init__(
+        self, ctx, backend: BackendClient, interview_id: str, max_seconds: int
+    ):
         self.ctx = ctx
         self.room = ctx.room
         self.backend = backend
@@ -170,7 +247,9 @@ class InterviewRunner:
     # --- data channel helpers ---
     async def _publish(self, payload: bytes) -> None:
         try:
-            await self.room.local_participant.publish_data(payload, topic=TOPIC, reliable=True)
+            await self.room.local_participant.publish_data(
+                payload, topic=TOPIC, reliable=True
+            )
         except Exception as exc:  # noqa: BLE001 - best-effort UI mirror
             log.warning("publish_data_failed", error=str(exc))
 
@@ -195,7 +274,9 @@ class InterviewRunner:
         if speaker == "candidate":
             self._candidate_turns += 1
         self._seq += 1
-        started_at_epoch = (item.metrics.get("started_speaking_at") if item.metrics else None) or item.created_at
+        started_at_epoch = (
+            item.metrics.get("started_speaking_at") if item.metrics else None
+        ) or item.created_at
         started_at = datetime.fromtimestamp(started_at_epoch, tz=UTC)
         self._turns.put_nowait((self._seq, speaker, text, started_at))
 
@@ -214,6 +295,11 @@ class InterviewRunner:
             except Exception as exc:  # noqa: BLE001
                 log.warning("create_turn_failed", seq=seq, error=str(exc))
             await self._publish(datamsg.caption_final(speaker, text, seq))
+
+    def time_note(self) -> str:
+        elapsed = int(time.monotonic() - self._start)
+        remaining = max(0, self.max_seconds - elapsed)
+        return _time_note(elapsed, remaining, self.wrap_trigger)
 
     async def run_timer(self) -> None:
         while not self._ended.is_set():
@@ -238,11 +324,19 @@ class InterviewRunner:
         await self._publish(datamsg.control_state("ended"))
         try:
             await self.backend.set_status(
-                self.interview_id, "ended", end_reason=reason, elapsed_active_seconds=elapsed
+                self.interview_id,
+                "ended",
+                end_reason=reason,
+                elapsed_active_seconds=elapsed,
             )
         except Exception as exc:  # noqa: BLE001
             log.warning("set_status_ended_failed", error=str(exc))
-        log.info("interview_ended", interview_id=self.interview_id, reason=reason, elapsed=elapsed)
+        log.info(
+            "interview_ended",
+            interview_id=self.interview_id,
+            reason=reason,
+            elapsed=elapsed,
+        )
 
 
 async def entrypoint(ctx) -> None:
@@ -266,9 +360,11 @@ async def entrypoint(ctx) -> None:
             log.warning("bootstrap_failed", interview_id=interview_id, error=str(exc))
             boot = {}
 
-        instructions = _build_instructions(boot)
         cfg = boot.get("config") or {}
-        max_seconds = int(cfg.get("max_duration_seconds") or config.max_interview_seconds)
+        max_seconds = int(
+            cfg.get("max_duration_seconds") or config.max_interview_seconds
+        )
+        instructions = _build_instructions(boot, max_seconds)
 
         # AgentSession bundles a default silero VAD (livekit-agents 1.6), so no
         # explicit vad= is needed.
@@ -284,6 +380,13 @@ async def entrypoint(ctx) -> None:
 
         runner = InterviewRunner(ctx, backend, interview_id, max_seconds)
         session.on("conversation_item_added", runner.on_conversation_item)
+
+        class TimeAwareAgent(Agent):
+            """Injects the live clock into each LLM call — the model can't sense
+            elapsed time, so pacing (fill vs. wrap) must ride the turn context."""
+
+            async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
+                turn_ctx.add_message(role="system", content=runner.time_note())
 
         # Mark the interview live before the first utterance (SPEC §8.3).
         try:
@@ -305,11 +408,12 @@ async def entrypoint(ctx) -> None:
 
         ctx.add_shutdown_callback(_on_shutdown)
 
-        await session.start(agent=Agent(instructions=instructions), room=room)
+        await session.start(agent=TimeAwareAgent(instructions=instructions), room=room)
         # Kick off the interview: greet + first question.
         await session.generate_reply(
             instructions="Greet the candidate, introduce yourself as Kandidly in one sentence, "
-            "say this is a short voice screening, then ask the first question from the plan."
+            f"say this is a voice screening of about {max(1, round(max_seconds / 60))} minutes, "
+            "then ask the first question from the plan."
         )
     except Exception:
         await backend.aclose()
@@ -331,7 +435,9 @@ def main() -> None:
     # ws_url/api_key/api_secret are read from the LIVEKIT_* env exported above.
     # agent_name switches this worker to explicit dispatch: it only gets jobs
     # for rooms whose candidate token names it (config.py explains why).
-    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint, agent_name=config.livekit_agent_name))
+    cli.run_app(
+        WorkerOptions(entrypoint_fnc=entrypoint, agent_name=config.livekit_agent_name)
+    )
 
 
 if __name__ == "__main__":
