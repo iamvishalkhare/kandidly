@@ -156,20 +156,39 @@ function CopyTextButton({ text, label }: { text: string; label: string }) {
 function CandidatePhoto({ url, alt }: { url?: string | null; alt: string }) {
   const pinnedRef = useRef<string | null>(null);
   const [, bump] = useState(0);
+  const [zoomed, setZoomed] = useState(false);
   if (!pinnedRef.current && url) pinnedRef.current = url;
   if (!pinnedRef.current) return null;
+  const onError = () => {
+    if (url && url !== pinnedRef.current) {
+      pinnedRef.current = url;
+      bump(n => n + 1);
+    }
+  };
   return (
-    <img
-      src={pinnedRef.current}
-      alt={alt}
-      onError={() => {
-        if (url && url !== pinnedRef.current) {
-          pinnedRef.current = url;
-          bump(n => n + 1);
-        }
-      }}
-      className="size-16 shrink-0 border border-outline-variant object-cover bg-surface-container-lowest"
-    />
+    <>
+      <button
+        type="button"
+        onClick={() => setZoomed(true)}
+        aria-label={`Enlarge ${alt}`}
+        className="size-24 shrink-0 cursor-zoom-in border border-outline-variant bg-surface-container-lowest"
+      >
+        <img
+          src={pinnedRef.current}
+          alt={alt}
+          onError={onError}
+          className="size-full object-cover"
+        />
+      </button>
+      <Modal open={zoomed} onClose={() => setZoomed(false)} title={alt} size="lg">
+        <img
+          src={pinnedRef.current}
+          alt={alt}
+          onError={onError}
+          className="w-full max-h-[70vh] object-contain border border-outline-variant bg-surface-container-lowest"
+        />
+      </Modal>
+    </>
   );
 }
 
