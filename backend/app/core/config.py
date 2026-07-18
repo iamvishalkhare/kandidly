@@ -62,7 +62,13 @@ class Settings(BaseSettings):
     # fail-open rate limiter); set both keys in prod to enforce.
     recaptcha_site_key: str = ""
     recaptcha_secret_key: str = ""
-    recaptcha_min_score: float = 0.5
+    # v3 score thresholds, calibrated from observed traffic (2026-07-18): real
+    # first-visit humans commonly score 0.3 (no interaction history on a cold
+    # landing load); headless automation scores 0.1. The landing pair
+    # (resolve/claim) fires on page load with zero interaction, so it gets a
+    # lower bar than in-flow actions like form_submit.
+    recaptcha_min_score: float = 0.3
+    recaptcha_min_score_landing: float = 0.2
 
     # source scraping (interview context enrichment) — optional GitHub token
     # lifts the unauthenticated REST rate limit (60→5000/hr). Empty is fine in dev.

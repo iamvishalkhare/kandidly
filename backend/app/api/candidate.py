@@ -62,7 +62,10 @@ _MAX_RESUME_BYTES = 10 * 1024 * 1024
     response_model=ClaimOut,
     # Claim creates the application row — the costly step reachable straight
     # from the public landing page, so it gets the same captcha gate.
-    dependencies=[rate_limit("claim", 10), require_captcha("claim")],
+    dependencies=[
+        rate_limit("claim", 10),
+        require_captcha("claim", min_score_setting="recaptcha_min_score_landing"),
+    ],
 )
 async def claim(
     token: str,
