@@ -17,7 +17,11 @@ x-backend-env: &backend-env
   KANDIDLY_S3_SECRET_KEY: ${KANDIDLY_S3_SECRET_KEY:-kandidly-secret}
   KANDIDLY_S3_REGION: ${KANDIDLY_S3_REGION:-us-east-1}
   KANDIDLY_AUTH_DEV_MODE: ${KANDIDLY_AUTH_DEV_MODE:-true}
-  KANDIDLY_JWT_ALG: ${KANDIDLY_JWT_ALG:-RS256}
+  KANDIDLY_JWT_SECRET: ${KANDIDLY_JWT_SECRET:-dev-jwt-secret-change-me-not-for-prod}
+  # WorkOS AuthKit (empty → /api/auth/login 500s; dev picker still works)
+  KANDIDLY_WORKOS_API_KEY: ${KANDIDLY_WORKOS_API_KEY:-}
+  KANDIDLY_WORKOS_CLIENT_ID: ${KANDIDLY_WORKOS_CLIENT_ID:-}
+  KANDIDLY_WORKOS_REDIRECT_URI: ${KANDIDLY_WORKOS_REDIRECT_URI:-http://localhost:8000/api/auth/callback}
   KANDIDLY_SERVICE_TOKEN: ${KANDIDLY_SERVICE_TOKEN:-dev-service-token-change-me}
   # reCAPTCHA v3 — guards the candidate form submit (empty secret → skipped).
   KANDIDLY_RECAPTCHA_SITE_KEY: ${KANDIDLY_RECAPTCHA_SITE_KEY:-}

@@ -15,7 +15,14 @@ the arq worker does NOT auto-reload (`podman restart kandidly_worker_1` after jo
 - **Dev tokens**: `curl -s localhost:8000/api/public/dev-users` → per-user bearer
   tokens (admin + candidates). Frontend auth = localStorage `kandidly_token` +
   `kandidly_user` (JSON `{email, role, token}`), settable via Playwright
-  `addInitScript`.
+  `addInitScript`. Works only while `KANDIDLY_ENV=dev` + `AUTH_DEV_MODE=true`.
+- **WorkOS AuthKit e2e** (real login): create a WorkOS user via the SDK —
+  `password=` on create_user is silently dropped; call
+  `um.update_user(uid, password=PasswordPlaintext(password=...))` afterwards.
+  Hosted UI drive: fill `input[type=email]` → Enter → `input[type=password]`
+  appears → fill → click `button[type=submit]` (Enter alone doesn't submit the
+  password form). Working 3-scenario script: `workos_e2e.mjs` from the
+  2026-07-18 session (console signup / seeded-admin link / candidate claim).
 - **Playwright**: cached at `~/.npm/_npx/e41f203b7505f1fb/node_modules` — import by
   absolute path. Chromium flags for fake mic/cam:
   `--use-fake-ui-for-media-stream --use-fake-device-for-media-stream --autoplay-policy=no-user-gesture-required`.

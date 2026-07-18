@@ -34,10 +34,21 @@ class Settings(BaseSettings):
     s3_secret_key: str = "kandidly-secret"
     s3_region: str = "us-east-1"
 
-    # auth contract (SPEC §3.6)
-    jwt_public_key: str = ""
-    jwt_alg: str = "RS256"
+    # auth (supersedes SPEC §3.6 "external users table"): WorkOS AuthKit is the
+    # identity provider, but the backend exchanges the callback code and mints
+    # its OWN HS256 bearer JWT (claims: sub, email, role, org_id) so deps.py,
+    # role guards, and the logout denylist stay token-scheme-agnostic.
+    jwt_secret: str = "dev-jwt-secret-change-me-not-for-prod"
+    jwt_ttl_s: int = 7 * 24 * 3600
+    # Dev fallback: unsigned base64 dev tokens (seed picker, API test suite).
+    # verify_jwt only honors them when env == "dev" — prod rejects them even if
+    # this flag is accidentally left on.
     auth_dev_mode: bool = False
+
+    # WorkOS AuthKit (hosted UI redirect flow)
+    workos_api_key: str = ""
+    workos_client_id: str = ""
+    workos_redirect_uri: str = "http://localhost:8000/api/auth/callback"
 
     # tenancy — slug of the org that new staff/content falls back to until
     # WorkOS org sync lands (must match the org seeded by migration 0003)

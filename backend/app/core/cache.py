@@ -31,6 +31,11 @@ async def set_json(key: str, value: Any, ttl: int | None = None) -> None:
         await r.set(key, data)
 
 
+async def delete(key: str) -> None:
+    r = await _get_redis()
+    await r.delete(key)
+
+
 async def get_json(key: str) -> Any | None:
     r = await _get_redis()
     raw = await r.get(key)

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,17 +27,11 @@ async def get_config() -> ConfigOut:
 
 
 @router.get("/dev-users")
-async def dev_users(request: Request, db: AsyncSession = Depends(get_db)) -> list[dict]:
+async def dev_users(db: AsyncSession = Depends(get_db)) -> list[dict]:
     """Dev-mode only: list seeded users with ready-made debug bearer tokens so
-    the web app can offer a role switcher. 404s outside AUTH_DEV_MODE.
-
-    TEMPORARY prod stopgap (until WorkOS): outside dev, staff tokens are
-    console credentials, so they are only listed when the edge proxy asserts
-    X-Console-Gate after validating the console gate cookie — the proxy strips
-    inbound copies of the header (infra/Caddyfile.prod), so clients can't
-    assert it themselves. Ungated callers still see candidate accounts, which
-    the /i/<token> landing picker needs.
-    """
+    the web app can offer a role switcher. Requires BOTH AUTH_DEV_MODE and
+    env == "dev" (matching verify_jwt's dev-token gate) — prod always 404s;
+    real logins go through WorkOS AuthKit (/api/auth/login)."""
     import base64
     import json
     from datetime import UTC, datetime
@@ -47,14 +41,11 @@ async def dev_users(request: Request, db: AsyncSession = Depends(get_db)) -> lis
     from app.core.errors import AppError
     from app.db.models import User
 
-    if not settings.auth_dev_mode:
+    if not (settings.auth_dev_mode and settings.is_dev):
         raise AppError("not_found", "Not available")
-    gated = settings.is_dev or request.headers.get("x-console-gate") == "1"
     users = (await db.execute(sa_select(User).order_by(User.role, User.email))).scalars().all()
     out = []
     for u in users:
-        if u.role != "candidate" and not gated:
-            continue
         # `iat` makes each issued token unique, so revoking one at logout
         # (auth denylist) doesn't lock the dev user out of the next login.
         payload = {

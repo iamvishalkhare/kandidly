@@ -1687,6 +1687,7 @@ dependencies = [
     { name = "structlog" },
     { name = "uuid7" },
     { name = "uvicorn", extra = ["standard"] },
+    { name = "workos" },
 ]
 
 [package.optional-dependencies]
@@ -1738,6 +1739,7 @@ requires-dist = [
     { name = "structlog", specifier = ">=24.4" },
     { name = "uuid7", specifier = ">=0.1.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32,<1.0" },
+    { name = "workos", specifier = ">=5.0" },
 ]
 provides-extras = ["identity"]
 
@@ -4596,6 +4598,20 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/c2/b6/b9afed2afadddaf5ebb2afa801abf4b0868f42f8539bfe4b071b5266c9fe/websockets-16.0-cp314-cp314t-win32.whl", hash = "sha256:5a4b4cc550cb665dd8a47f868c8d04c8230f857363ad3c9caf7a0c3bf8c61ca6", size = 178085, upload-time = "2026-01-10T09:23:33.816Z" },
     { url = "https://files.pythonhosted.org/packages/9f/3e/28135a24e384493fa804216b79a6a6759a38cc4ff59118787b9fb693df93/websockets-16.0-cp314-cp314t-win_amd64.whl", hash = "sha256:b14dc141ed6d2dde437cddb216004bcac6a1df0935d79656387bd41632ba0bbd", size = 178531, upload-time = "2026-01-10T09:23:35.016Z" },
     { url = "https://files.pythonhosted.org/packages/6f/28/258ebab549c2bf3e64d2b0217b973467394a9cea8c42f70418ca2c5d0d2e/websockets-16.0-py3-none-any.whl", hash = "sha256:1637db62fad1dc833276dded54215f2c7fa46912301a24bd94d45d46a011ceec", size = 171598, upload-time = "2026-01-10T09:23:45.395Z" },
+]
+
+[[package]]
+name = "workos"
+version = "9.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "cryptography" },
+    { name = "httpx" },
+    { name = "pyjwt" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/54/4e/e29e08078af9e55789c50100e43ab3b70abf0309af243c2946053c6d7a24/workos-9.1.0.tar.gz", hash = "sha256:28f72a90062bd0c34f6867fe757fc45273a5c18bf7d015141556f19bed8f067c", size = 215722, upload-time = "2026-07-06T15:52:07.853Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c0/64/89aa6d682156c005b8903e8d8664e4983e7876e599bfba4c6aa99d1b1810/workos-9.1.0-py3-none-any.whl", hash = "sha256:b28e071faa5aaea9d0b83f71099e10539ba386901bf45379f1f59f29817ecf5e", size = 626837, upload-time = "2026-07-06T15:52:05.892Z" },
 ]
 
 [[package]]

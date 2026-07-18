@@ -695,10 +695,11 @@ async def _detail_out(db: AsyncSession, r: Requisition) -> ConsoleRequisitionDet
     )
 
 
-async def _get_live_requisition(db: AsyncSession, req_id: UUID) -> Requisition:
-    """Fetch for view/edit — a soft-deleted requisition is gone (404)."""
+async def _get_live_requisition(db: AsyncSession, req_id: UUID, org_id: UUID) -> Requisition:
+    """Fetch for view/edit — soft-deleted or another org's requisition is gone
+    (404 either way; existence must not leak across tenants)."""
     req = await db.get(Requisition, req_id)
-    if req is None or req.deleted_at is not None:
+    if req is None or req.deleted_at is not None or req.org_id != org_id:
         raise AppError("not_found", "Requisition not found")
     return req
 
@@ -707,7 +708,7 @@ async def _get_live_requisition(db: AsyncSession, req_id: UUID) -> Requisition:
 async def get_console_requisition(
     req_id: UUID, user: AuthUser = _admin, db: AsyncSession = Depends(get_db)
 ) -> ConsoleRequisitionDetailOut:
-    req = await _get_live_requisition(db, req_id)
+    req = await _get_live_requisition(db, req_id, await _org_id_for(db, user))
     return await _detail_out(db, req)
 
 
@@ -796,8 +797,8 @@ async def update_requisition(
     import asyncio
 
     await asyncio.sleep(3)
-    req = await _get_live_requisition(db, req_id)
     org_id = await _org_id_for(db, user)
+    req = await _get_live_requisition(db, req_id, org_id)
 
     current_template = await db.get(FormTemplate, req.form_template_id)
     current_rubric = await db.get(Rubric, req.rubric_id)
@@ -889,7 +890,7 @@ async def delete_requisition(
     every console/admin read and its invite links stop resolving ('closed'),
     while interviews taken against it keep their requisition_id and stay in
     the ledger."""
-    req = await _get_live_requisition(db, req_id)
+    req = await _get_live_requisition(db, req_id, await _org_id_for(db, user))
     now = datetime.now(UTC)
     req.deleted_at = now
     req.status = "closed"
@@ -935,14 +936,16 @@ def _ledger_row(
     )
 
 
-async def _ledger_rows(db: AsyncSession, limit: int | None = None) -> list[ConsoleInterviewOut]:
+async def _ledger_rows(
+    db: AsyncSession, org_id: UUID, limit: int | None = None
+) -> list[ConsoleInterviewOut]:
     stmt = (
         select(Interview, User, Requisition, Report)
         .join(Application, Application.id == Interview.application_id)
         .join(User, User.id == Application.candidate_id)
         .join(Requisition, Requisition.id == Interview.requisition_id)
         .outerjoin(Report, Report.interview_id == Interview.id)
-        .where(Interview.ended_at.is_not(None))
+        .where(Interview.ended_at.is_not(None), Requisition.org_id == org_id)
         .order_by(Interview.ended_at.desc())
     )
     if limit:
@@ -951,20 +954,28 @@ async def _ledger_rows(db: AsyncSession, limit: int | None = None) -> list[Conso
     return [_ledger_row(i, u, r, rep) for i, u, r, rep in rows]
 
 
+async def _get_org_interview(db: AsyncSession, interview_id: UUID, user: AuthUser) -> Interview:
+    """Interview lookup for review surfaces — another org's interview must 404
+    identically to a missing one (tenant isolation with open signup)."""
+    interview = await db.get(Interview, interview_id)
+    req = await db.get(Requisition, interview.requisition_id) if interview else None
+    if interview is None or req is None or req.org_id != await _org_id_for(db, user):
+        raise AppError("not_found", "Interview not found")
+    return interview
+
+
 @router.get("/interviews", response_model=list[ConsoleInterviewOut])
 async def list_console_interviews(
     user: AuthUser = _admin, db: AsyncSession = Depends(get_db)
 ) -> list[ConsoleInterviewOut]:
-    return await _ledger_rows(db)
+    return await _ledger_rows(db, await _org_id_for(db, user))
 
 
 @router.get("/interviews/{interview_id}", response_model=ConsoleReviewOut)
 async def get_console_review(
     interview_id: UUID, user: AuthUser = _admin, db: AsyncSession = Depends(get_db)
 ) -> ConsoleReviewOut:
-    interview = await db.get(Interview, interview_id)
-    if interview is None:
-        raise AppError("not_found", "Interview not found")
+    interview = await _get_org_interview(db, interview_id, user)
     app = await db.get(Application, interview.application_id)
     candidate = await db.get(User, app.candidate_id) if app else None
     req = await db.get(Requisition, interview.requisition_id)
@@ -1208,9 +1219,7 @@ async def console_review_snapshots(
     """Filmstrip page for the review screen: every captured frame, capture
     order, presigned image URLs. Small pages keep presigning cheap; the client
     infinite-scrolls through them."""
-    interview = await db.get(Interview, interview_id)
-    if interview is None:
-        raise AppError("not_found", "Interview not found")
+    interview = await _get_org_interview(db, interview_id, user)
     offset = max(0, offset)
     limit = max(1, min(50, limit))
     start = interview.started_at
@@ -1259,10 +1268,13 @@ async def get_dashboard(
 ) -> ConsoleDashboardOut:
     now = datetime.now(UTC)
     horizon = _week_start(now) - timedelta(weeks=11)
+    org_id = await _org_id_for(db, user)
 
     ended = (
         await db.execute(
-            select(Interview.ended_at, Interview.end_reason).where(Interview.ended_at.is_not(None))
+            select(Interview.ended_at, Interview.end_reason)
+            .join(Requisition, Requisition.id == Interview.requisition_id)
+            .where(Interview.ended_at.is_not(None), Requisition.org_id == org_id)
         )
     ).all()
     completed_total = len(ended)
@@ -1284,10 +1296,21 @@ async def get_dashboard(
 
     delta_pct = round(100 * (last7 - prev7) / prev7, 1) if prev7 else None
 
-    average_score = (await db.execute(select(func.avg(Report.overall_score)))).scalar_one_or_none()
+    average_score = (
+        await db.execute(
+            select(func.avg(Report.overall_score))
+            .join(Interview, Interview.id == Report.interview_id)
+            .join(Requisition, Requisition.id == Interview.requisition_id)
+            .where(Requisition.org_id == org_id)
+        )
+    ).scalar_one_or_none()
 
     active_reqs = (
-        await db.execute(select(Requisition.domain).where(Requisition.status == "open"))
+        await db.execute(
+            select(Requisition.domain).where(
+                Requisition.status == "open", Requisition.org_id == org_id
+            )
+        )
     ).all()
 
     return ConsoleDashboardOut(
@@ -1300,5 +1323,5 @@ async def get_dashboard(
             WeeklyPointOut(week_start=k, count=v) for k, v in completed_buckets.items()
         ],
         weekly_dropped=[WeeklyPointOut(week_start=k, count=v) for k, v in dropped_buckets.items()],
-        recent_interviews=await _ledger_rows(db, limit=8),
+        recent_interviews=await _ledger_rows(db, org_id, limit=8),
     )

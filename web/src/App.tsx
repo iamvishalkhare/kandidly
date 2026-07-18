@@ -4,12 +4,13 @@ import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-quer
 import { ChevronRight } from 'lucide-react';
 import { cn } from './lib/utils';
 import { getToken, getUser, subscribeAuth, setAuth } from './lib/auth';
-import { publicApi } from './lib/api';
+import { authApi, publicApi } from './lib/api';
 import { ToastProvider } from './components/ui';
 import type { DevUser } from './lib/types';
 
 // --- Pages ---
 import Marketing         from './pages/Marketing';
+import AuthCallback      from './pages/AuthCallback';
 import CandidateLanding  from './pages/candidate/Landing';
 import CandidateForm     from './pages/candidate/Form';
 import CandidateLobby    from './pages/candidate/Lobby';
@@ -47,12 +48,23 @@ function useAuth() {
   return { token, user, isLoggedIn: !!token };
 }
 
-// ─── Dev login screen ─────────────────────────────────────────────────────────
+// ─── Login screen ─────────────────────────────────────────────────────────────
+// Real sign-in goes through WorkOS AuthKit (full-page redirect; the backend
+// returns the app JWT on /auth/callback). Dev builds additionally list the
+// seeded dev accounts (/api/public/dev-users — 404s outside dev).
 
-function LoginScreen({ onPick }: { onPick: (user: DevUser) => void }) {
+const IS_DEV_BUILD = Boolean((import.meta as { env: Record<string, string | boolean> }).env.DEV);
+
+function LoginScreen({ intent, returnTo, onPick }: {
+  intent: 'console' | 'candidate';
+  returnTo: string;
+  onPick: (user: DevUser) => void;
+}) {
   const { data: devUsers, isLoading, error } = useQuery({
     queryKey: ['dev-users'],
     queryFn: publicApi.getDevUsers,
+    enabled: IS_DEV_BUILD,
+    retry: false,
   });
 
   const roleColor = (role: string) => {
@@ -70,10 +82,28 @@ function LoginScreen({ onPick }: { onPick: (user: DevUser) => void }) {
             <span className="size-2.5 bg-primary-container" />
             <h1 className="font-display text-lg font-bold tracking-tight text-primary-fixed-dim leading-none">KANDIDLY</h1>
           </div>
-          <p className="label-mono text-text-muted mt-2 ml-[18px]">Voice console // dev access</p>
+          <p className="label-mono text-text-muted mt-2 ml-[18px]">
+            {intent === 'console' ? 'Voice console' : 'Candidate sign-in'}
+          </p>
         </div>
 
+        {/* Primary: WorkOS AuthKit hosted sign-in */}
+        <div className="p-5 border-b border-outline-variant bg-surface-container-lowest">
+          <a
+            href={authApi.loginUrl(intent, returnTo)}
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium bg-primary-container text-on-primary-container hover:opacity-90 transition-opacity"
+          >
+            Sign in
+            <ChevronRight size={14} />
+          </a>
+          <p className="label-mono text-text-muted mt-3 text-center">
+            Google · email &amp; password · magic link
+          </p>
+        </div>
+
+        {!IS_DEV_BUILD ? null : (
         <div className="bg-surface-container-lowest">
+          <p className="label-mono text-text-muted px-4 pt-4 pb-1">Dev access — seeded accounts</p>
           {isLoading && (
             <div className="py-8 flex flex-col items-center gap-2 text-text-muted">
               <svg className="animate-spin size-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -111,10 +141,7 @@ function LoginScreen({ onPick }: { onPick: (user: DevUser) => void }) {
             </button>
           ))}
         </div>
-
-        <p className="label-mono text-center text-text-muted border-t border-outline-variant px-4 py-3 bg-surface">
-          Tokens auto-generated from seed data
-        </p>
+        )}
       </div>
     </div>
   );
@@ -136,7 +163,11 @@ function AppInner() {
 
   if (!isLoggedIn && needsAuth) {
     return (
-      <LoginScreen onPick={handlePick} />
+      <LoginScreen
+        intent={path.startsWith('/console') ? 'console' : 'candidate'}
+        returnTo={path + window.location.search}
+        onPick={handlePick}
+      />
     );
   }
 
@@ -145,6 +176,9 @@ function AppInner() {
     <Routes>
       {/* Marketing (public-facing) */}
       <Route path="/" element={<Marketing />} />
+
+      {/* WorkOS AuthKit return leg (token/error arrives in the URL fragment) */}
+      <Route path="/auth/callback" element={<AuthCallback />} />
 
       {/* Console (standalone pages with their own layout) */}
       <Route path="/console" element={<ConsoleDashboard />} />

@@ -20,6 +20,7 @@ import type {
   JoinOut,
   LinkOut,
   LinkResolveOut,
+  MeOut,
   ReportOut,
   RequisitionOut,
   RubricOut,
@@ -39,9 +40,6 @@ const API_BASE =
 export const api = axios.create({
   baseURL: API_BASE,
   headers: { 'Content-Type': 'application/json' },
-  // Sends the console gate cookie (set by Caddy basicauth in prod — see
-  // infra/Caddyfile.prod) on the cross-origin app→api requests. No-op in dev.
-  withCredentials: true,
 });
 
 // Attach token on every request
@@ -104,6 +102,20 @@ export const publicApi = {
 // ─── Auth ──────────────────────────────────────────────────────────────────────
 
 export const authApi = {
+  /**
+   * URL that starts the WorkOS AuthKit redirect flow (full-page navigation,
+   * not XHR). The backend stores intent + return_to server-side and hands the
+   * SPA a token on /auth/callback when the hosted login completes.
+   */
+  loginUrl: (intent: 'console' | 'candidate', returnTo: string): string =>
+    `${API_BASE}/api/auth/login?intent=${intent}&return_to=${encodeURIComponent(returnTo)}`,
+  /** Profile for a bearer token — called from /auth/callback before setAuth. */
+  me: async (token: string): Promise<MeOut> => {
+    const { data } = await api.get<MeOut>('/api/auth/me', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return data;
+  },
   /** Revokes the current bearer token server-side (Redis denylist + audit). */
   logout: async (): Promise<void> => {
     await api.post('/api/auth/logout');
