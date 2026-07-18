@@ -57,7 +57,13 @@ _MAX_RESUME_BYTES = 10 * 1024 * 1024
 
 
 # --- claim (SPEC §8.5, §12.2 #3) -------------------------------------------
-@router.post("/i/{token}/claim", response_model=ClaimOut, dependencies=[rate_limit("claim", 10)])
+@router.post(
+    "/i/{token}/claim",
+    response_model=ClaimOut,
+    # Claim creates the application row — the costly step reachable straight
+    # from the public landing page, so it gets the same captcha gate.
+    dependencies=[rate_limit("claim", 10), require_captcha("claim")],
+)
 async def claim(
     token: str,
     user: AuthUser = Depends(require_candidate),
