@@ -21,7 +21,7 @@ export interface SnapshotLoop {
 
 export function startSnapshotLoop(
   interviewId: string,
-  opts: { intervalS: number; onCameraDenied?: () => void },
+  opts: { intervalS: number; deviceId?: string | null; onCameraDenied?: () => void },
 ): SnapshotLoop {
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -75,7 +75,12 @@ export function startSnapshotLoop(
   void (async () => {
     try {
       stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 640 } },
+        // `ideal` on the lobby-chosen camera lets the browser fall back to any
+        // available one if that device has been unplugged since.
+        video: {
+          width: { ideal: 640 },
+          ...(opts.deviceId ? { deviceId: { ideal: opts.deviceId } } : {}),
+        },
         audio: false,
       });
       if (stopped) {
