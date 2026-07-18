@@ -45,7 +45,15 @@ class RunScore:
 
 def filter_evidence(run: RunScore, turn_text_by_id: dict[str, str]) -> RunScore:
     """Drop non-matching quotes; a run left with zero valid quotes → confidence 0
-    and excluded from aggregation (SPEC §11.3)."""
+    and excluded from aggregation (SPEC §11.3).
+
+    Exception: a run that scored the anchor FLOOR stays valid without evidence.
+    Quote verification exists to stop hallucinated claims of competence, and a
+    floor score claims none — it asserts the *absence* of demonstrated skill,
+    which has no quote to point at (the score prompt explicitly tells the
+    model to keep evidence minimal in that case). Invalidating it swapped the
+    model's genuine rationale for the misleading "Not assessable" boilerplate
+    on every legitimately-poor criterion (2026-07-19)."""
     kept = [
         e
         for e in run.evidence
@@ -53,7 +61,7 @@ def filter_evidence(run: RunScore, turn_text_by_id: dict[str, str]) -> RunScore:
         and verify_quote(e.get("quote", ""), turn_text_by_id[e["turn_id"]])
     ]
     run.evidence = kept
-    if not kept:
+    if not kept and run.score > ANCHOR_MIN:
         run.confidence = 0.0
         run.valid = False
     return run
