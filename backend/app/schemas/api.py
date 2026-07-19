@@ -25,6 +25,9 @@ class LinkResolveOut(BaseModel):
     # Configured interview length (interview_config.max_duration_seconds), so
     # the landing page quotes the real duration instead of a generic 30 min.
     duration_minutes: int | None = None
+    # Guest-listed access (interview_config.invite_only): the landing page
+    # warns that only invited emails can proceed before the candidate signs in.
+    invite_only: bool = False
     status_ok: bool
     reason: str | None = None
 

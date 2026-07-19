@@ -31,6 +31,7 @@ import {
 import { cn } from '../../lib/utils';
 import { useToast, Spinner } from '../../components/ui';
 import ConsoleLayout from './ConsoleLayout';
+import InvitePanel from './InvitePanel';
 import { copyToClipboard, getInterviewUrl } from './requisitionData';
 import {
   consoleApi,
@@ -593,6 +594,7 @@ function BuilderForm({
   const [endDate, setEndDate]     = useState(toDatetimeLocal(existing?.end_date));
   const [durationMinutes, setDurationMinutes] = useState<number>(existing?.duration_minutes ?? 30);
   const [proctoringEnabled, setProctoringEnabled] = useState(existing?.proctoring_enabled ?? true);
+  const [inviteOnly, setInviteOnly] = useState(existing?.invite_only ?? false);
   const [touched, setTouched]     = useState<Record<string, boolean>>({});
   const [attempted, setAttempted] = useState(false);
 
@@ -736,6 +738,7 @@ function BuilderForm({
     tone,
     end_date: endDate || null,
     proctoring_enabled: proctoringEnabled,
+    invite_only: inviteOnly,
     duration_minutes: Math.max(15, Math.min(90, Math.round(durationMinutes) || 30)),
     sample_questions: sampleQuestions
       .filter(q => q.text.trim())
@@ -1241,10 +1244,63 @@ function BuilderForm({
             </button>
           </div>
 
-          {/* 06. Screening Form Builder */}
+          {/* 06. Access & Invitations */}
           <div className="p-5 border-b border-outline-variant">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="font-display text-headline-md text-on-surface">06. Screening Form Builder</h2>
+              <h2 className="font-display text-headline-md text-on-surface">06. Access &amp; Invitations</h2>
+            </div>
+            <button
+              type="button"
+              onClick={() => setInviteOnly(enabled => !enabled)}
+              className={cn(
+                'w-full flex items-start gap-3 p-4 border transition-colors duration-150 text-left',
+                inviteOnly
+                  ? 'border-primary-container bg-primary-container/10'
+                  : 'border-outline-variant bg-surface hover:bg-surface-container',
+              )}
+              aria-pressed={inviteOnly}
+            >
+              <span
+                className={cn(
+                  'size-5 border shrink-0 flex items-center justify-center mt-0.5',
+                  inviteOnly
+                    ? 'bg-primary-container border-primary-container'
+                    : 'border-outline-variant',
+                )}
+              >
+                {inviteOnly && <Check size={14} className="text-on-primary" />}
+              </span>
+              <span className="flex flex-col gap-1.5">
+                <span className={cn('label-mono uppercase', inviteOnly ? 'text-primary-fixed-dim' : 'text-on-surface')}>
+                  Invite-Only Interview
+                </span>
+                <span className="text-body-md text-on-surface-variant normal-case">
+                  The interview link stays the same, but only candidates you invite below (by
+                  email) can start the interview. Anyone else who opens the link is asked to sign
+                  in with an invited email address. Turn this off to let anyone with the link
+                  apply.
+                </span>
+                <span className="text-body-md text-on-surface-variant normal-case">
+                  Invited candidates receive the interview link by email — immediately while the
+                  requisition is live, or as soon as it is deployed.
+                </span>
+              </span>
+            </button>
+            {inviteOnly &&
+              (existing ? (
+                <InvitePanel requisitionId={existing.id} live={existing.status === 'open'} />
+              ) : (
+                <p className="mt-3 text-body-md text-on-surface-variant">
+                  Deploy (or save) this requisition first — the invite list opens right here
+                  afterwards.
+                </p>
+              ))}
+          </div>
+
+          {/* 07. Screening Form Builder */}
+          <div className="p-5 border-b border-outline-variant">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="font-display text-headline-md text-on-surface">07. Screening Form Builder</h2>
             </div>
             <div className="grid grid-cols-1 xl:grid-cols-[260px_minmax(0,1fr)] gap-5">
               {/* Toolbox */}
@@ -1461,7 +1517,7 @@ function BuilderForm({
           {/* 07. Assessment Rubrics */}
           <div className="p-5 border-b border-outline-variant">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="font-display text-headline-md text-on-surface">07. Assessment Rubrics</h2>
+              <h2 className="font-display text-headline-md text-on-surface">08. Assessment Rubrics</h2>
             </div>
             <div className="flex flex-col gap-4">
               {criteria.map(c => (

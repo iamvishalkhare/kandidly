@@ -14,6 +14,8 @@ export interface LinkResolveOut {
   interview_type: string | null;
   // Configured interview length in minutes (real value, not a generic 30).
   duration_minutes: number | null;
+  // Guest-listed access: only invited emails can claim (same URL either way).
+  invite_only: boolean;
   status_ok: boolean;
   reason: string | null;
 }

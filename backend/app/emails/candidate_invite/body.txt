@@ -1,5 +1,9 @@
 {% extends "base.txt" %}
 {% block content %}
+{% if candidate_name | default("") %}
+Hi {{ candidate_name }},
+
+{% endif %}
 {{ org_name }} has invited you to complete an interview: {{ interview_name }}.
 
 The interview is a voice conversation with an AI interviewer. It takes place
@@ -8,6 +12,8 @@ ready.
 
 Start your interview:
 {{ interview_url }}
+{% if valid_until | default("") %}
 
 This invitation is valid until {{ valid_until }}.
+{% endif %}
 {% endblock %}

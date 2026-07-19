@@ -117,14 +117,16 @@ async def resolve_link(token: str, db: AsyncSession = Depends(get_db)) -> LinkRe
 
     res = resolve(link, requisition)
     duration_minutes = None
+    invite_only = False
     if requisition is not None:
-        duration_minutes = (
-            InterviewConfig(**(requisition.interview_config or {})).max_duration_seconds // 60
-        )
+        config = InterviewConfig(**(requisition.interview_config or {}))
+        duration_minutes = config.max_duration_seconds // 60
+        invite_only = config.invite_only
     return LinkResolveOut(
         title=requisition.title if requisition else None,
         interview_type=requisition.interview_type if requisition else None,
         duration_minutes=duration_minutes,
+        invite_only=invite_only,
         status_ok=res.status_ok,
         reason=res.reason,
     )

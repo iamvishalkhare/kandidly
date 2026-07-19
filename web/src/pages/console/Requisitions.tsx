@@ -81,7 +81,17 @@ function ReqCard({
         )}
       >
         <div>
-          <p className="label-mono text-on-surface-variant mb-1">{req.code}</p>
+          <p className="label-mono text-on-surface-variant mb-1">
+            {req.code}
+            {req.inviteOnly && (
+              <span
+                className="ml-2 px-1.5 py-0.5 border border-outline-variant text-on-surface-variant"
+                title="Invite-only — the link only works for invited candidates"
+              >
+                INVITE ONLY
+              </span>
+            )}
+          </p>
           <h2
             className={cn(
               'font-display text-headline-md',
