@@ -1290,9 +1290,6 @@ async def delete_console_interview(
     # QuestionPlan -> QuestionPlanNode cascades (ondelete=CASCADE).
     await db.execute(sa_delete(QuestionPlan).where(QuestionPlan.interview_id == interview_id))
 
-    if file_ids:
-        await db.execute(sa_delete(StoredFile).where(StoredFile.id.in_(file_ids)))
-
     app = await db.get(Application, interview.application_id)
     if app:
         app.interview_id = None  # type: ignore
@@ -1302,6 +1299,12 @@ async def delete_console_interview(
         await db.flush()
 
     await db.execute(sa_delete(Interview).where(Interview.id == interview_id))
+    # Stored files last: interviews.audio_recording_id references stored_files
+    # with no ON DELETE, so deleting the recording's file before the interview
+    # row is an FK violation (their other referencers — reports, identity
+    # checks, snapshots — are already gone by this point).
+    if file_ids:
+        await db.execute(sa_delete(StoredFile).where(StoredFile.id.in_(file_ids)))
     await record_audit(
         db,
         actor_id=user.user_id,

@@ -26,6 +26,7 @@ from app.db.models import (
     ScoringJob,
     StoredFile,
     Turn,
+    User,
 )
 from app.db.session import SessionLocal
 from app.domain.interview_context import get_cached_context
@@ -42,6 +43,34 @@ def _allowed_headers() -> dict[str, str]:
     User row is needed — _org_id_for/_ensure_can_delete_interviews both fall
     back gracefully (default org; email straight off the token)."""
     return auth(mint_token(new_id(), ALLOWED_EMAIL, "admin"))
+
+
+async def _attach_recording(interview_id: str) -> str:
+    """Give the ended interview an audio recording, like process_recording
+    does. interviews.audio_recording_id references stored_files with no
+    ON DELETE, so the delete endpoint must remove the file row AFTER the
+    interview row — this is the completed-interview case that 500'd in prod."""
+    async with SessionLocal() as db:
+        file_id = new_id()
+        creator = (await db.execute(select(User.id).limit(1))).scalar_one()
+        db.add(
+            StoredFile(
+                id=file_id,
+                bucket="kandidly-recordings",
+                key=f"{interview_id}/audio.ogg",
+                mime="audio/ogg",
+                bytes=1024,
+                created_by=creator,
+            )
+        )
+        # No mapped relationship ties audio_recording_id to StoredFile, so the
+        # unit of work may order the interviews UPDATE before this INSERT —
+        # flush the file row first.
+        await db.flush()
+        interview = await db.get(Interview, interview_id)
+        interview.audio_recording_id = file_id
+        await db.commit()
+        return str(file_id)
 
 
 async def _insert_report(interview_id: str) -> None:
@@ -130,6 +159,7 @@ async def _full_interview_with_artifacts(
     assert r.status_code == 200, r.text
 
     await _insert_report(interview_id)
+    await _attach_recording(interview_id)
     return app_id, interview_id
 
 
@@ -231,6 +261,16 @@ async def test_delete_wipes_db_s3_and_redis(
             .all()
         )
     assert all(str(interview_id) not in f.key for f in remaining_selfie_or_snapshot)
+
+    # The audio recording's StoredFile row too — deleting it used to FK-violate
+    # against interviews.audio_recording_id and 500 the whole endpoint.
+    async with SessionLocal() as db:
+        recording = (
+            await db.execute(
+                select(StoredFile).where(StoredFile.key == f"{interview_id}/audio.ogg")
+            )
+        ).first()
+    assert recording is None
 
     assert not [k for (b, k) in stub_object_storage if k.startswith(f"{interview_id}/")]
     assert await get_cached_context(interview_id) is None
