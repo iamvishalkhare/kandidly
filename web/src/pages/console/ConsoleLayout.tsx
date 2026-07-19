@@ -10,13 +10,14 @@ import {
   Briefcase,
   MessageSquare,
   Send,
+  KeyRound,
   // BookOpen,   // re-enable with the Rubrics nav item
   // BarChart3,  // re-enable with the Analytics nav item
   ChevronRight,
   Plus,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { getUser } from '../../lib/auth';
+import { getUser, isOperator } from '../../lib/auth';
 import { useConsoleMe } from '../../lib/consoleApi';
 import AccountModal, { Avatar } from './AccountModal';
 
@@ -30,6 +31,9 @@ const NAV_ITEMS = [
   // { label: 'Rubrics',      icon: BookOpen,        href: '/console/rubrics',      exact: false },
   // { label: 'Analytics',    icon: BarChart3,       href: '/console/analytics',    exact: false },
 ] as const;
+
+// Operator-only: who may sign in to the invite-only console (lib/auth.ts).
+const OPERATOR_NAV_ITEM = { label: 'Access', icon: KeyRound, href: '/console/access', exact: false };
 
 /** Sidebar footer: the signed-in user; opens the account/usage/logout modal. */
 function UserChip({ onClick }: { onClick: () => void }) {
@@ -82,7 +86,7 @@ export default function ConsoleLayout({ children }: { children: React.ReactNode 
 
         {/* Primary nav */}
         <nav className="flex-1 px-3 py-2 space-y-0.5">
-          {NAV_ITEMS.map(item => {
+          {[...NAV_ITEMS, ...(isOperator() ? [OPERATOR_NAV_ITEM] : [])].map(item => {
             const Icon = item.icon;
             const isActive = item.exact
               ? location.pathname === item.href

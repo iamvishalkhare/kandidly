@@ -6,17 +6,12 @@ import { useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ArrowRight, CalendarClock, Filter, RotateCcw, Search, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { getUser } from '../../lib/auth';
+import { isOperator } from '../../lib/auth';
 import { useToast } from '../../components/ui';
 import ConsoleLayout from './ConsoleLayout';
 import { AutocompleteFilter, DropdownFilter } from './filters';
 import type { InterviewDecision } from './interviewData';
 import { useConsoleInterviews, useDeleteInterview } from '../../lib/consoleApi';
-
-// Hardcoded on purpose (matches the backend gate, backend/app/api/console.py)
-// — this delete capability is being exercised by one operator in prod before
-// it's considered safe to open up to every console user.
-const INTERVIEW_DELETE_ALLOWED_EMAIL = 'vishalkhare39@gmail.com';
 
 const dateTimeFormatter = new Intl.DateTimeFormat(undefined, {
   year: 'numeric',
@@ -54,8 +49,9 @@ export default function ConsoleInterviews() {
   const { data: interviews = [], isLoading } = useConsoleInterviews();
   const { toast } = useToast();
   const deleteInterview = useDeleteInterview();
-  const canDeleteInterviews =
-    getUser()?.email?.toLowerCase() === INTERVIEW_DELETE_ALLOWED_EMAIL;
+  // Operator-only in prod before it's considered safe to open up to every
+  // console user (matches the backend gate, backend/app/api/console.py).
+  const canDeleteInterviews = isOperator();
 
   const handleDelete = (id: string, candidateName: string) => {
     if (deleteInterview.isPending) return;

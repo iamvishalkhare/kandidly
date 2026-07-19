@@ -83,6 +83,23 @@ class User(Base):
     )
 
 
+class ConsoleAllowlistEntry(Base):
+    """Global allowlist of emails permitted to sign in with console intent —
+    the product is invite-only. Checked at the WorkOS callback *before* JIT
+    provisioning (uninvited sign-ins never create user/org rows); the
+    hardcoded operator email (domain/access.py) is always allowed. Candidate
+    sign-ins are never gated by this table. email is stored
+    lowercased+trimmed; removal is a hard delete (audit_log keeps history)."""
+
+    __tablename__ = "console_allowlist"
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    email: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    added_by: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+    created_at: Mapped[datetime] = _ts_created()
+
+
 # --------------------------------------------------------------------------- #
 # 7.1 Generic file registry
 # --------------------------------------------------------------------------- #

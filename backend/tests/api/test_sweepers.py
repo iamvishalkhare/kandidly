@@ -89,7 +89,9 @@ async def test_fresh_lobby_interview_not_swept(
         interview = await db.get(Interview, interview_id)
     assert interview.status == "lobby"
     assert interview.ended_at is None
-    assert not any(job == "finalize_interview" for job, _args in jobs)
+    # Scoped to this interview: the sweep may legitimately finalize stale
+    # lobby interviews left behind by earlier tests in the shared DB.
+    assert ("finalize_interview", (interview_id,)) not in jobs
 
 
 async def test_requisition_creator_sees_swept_interview_in_console(

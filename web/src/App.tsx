@@ -17,6 +17,7 @@ import CandidateLobby    from './pages/candidate/Lobby';
 import CandidateDone     from './pages/candidate/Done';
 // Lazy-loaded so the heavy livekit-client bundle only loads on the interview route.
 const CandidateInterview = lazy(() => import('./pages/candidate/Interview'));
+import ConsoleAccess     from './pages/console/Access';
 import ConsoleDashboard  from './pages/console/Dashboard';
 import ConsoleInterviews from './pages/console/Interviews';
 import ConsoleInvitations from './pages/console/Invitations';
@@ -189,6 +190,7 @@ function AppInner() {
       <Route path="/console/interviews" element={<ConsoleInterviews />} />
       <Route path="/console/interviews/:interviewId" element={<InterviewReview />} />
       <Route path="/console/invitations" element={<ConsoleInvitations />} />
+      <Route path="/console/access" element={<ConsoleAccess />} />
       <Route path="/console/requisitions" element={<ConsoleRequisitions />} />
       <Route path="/console/requisitions/new" element={<RequisitionBuilder />} />
       <Route path="/console/requisitions/:requisitionId" element={<RequisitionBuilder />} />

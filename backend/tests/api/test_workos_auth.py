@@ -3,7 +3,11 @@ JIT provisioning (new console signup → own fresh org; email-link of seeded
 users; repeat login), candidate-intent provisioning + personal-invite email
 matching, status/intent error redirects, state CSRF, and the app-JWT lifecycle
 (me + logout denylist). Dev-token env gating is exercised here too since the
-suite runs with AUTH_DEV_MODE=true."""
+suite runs with AUTH_DEV_MODE=true.
+
+Console sign-in is invite-only (domain/access.py), so every console-intent
+login here allowlists its email first via `_allow`; the gate itself is covered
+in test_console_allowlist.py."""
 
 from __future__ import annotations
 
@@ -76,6 +80,26 @@ def workos(monkeypatch):
     return stub
 
 
+async def _allow(email: str) -> None:
+    """Put an email on the console allowlist directly (idempotent) — these
+    tests exercise the login flow, not the operator management API."""
+    from app.core.ids import new_id
+    from app.db.models import ConsoleAllowlistEntry, User
+    from app.db.session import SessionLocal
+
+    email = email.strip().lower()
+    async with SessionLocal() as db:
+        existing = (
+            await db.execute(
+                select(ConsoleAllowlistEntry.id).where(ConsoleAllowlistEntry.email == email)
+            )
+        ).scalar_one_or_none()
+        if existing is None:
+            adder = (await db.execute(select(User.id).limit(1))).scalar_one()
+            db.add(ConsoleAllowlistEntry(id=new_id(), email=email, added_by=adder))
+            await db.commit()
+
+
 async def _login(client, workos, wuser, *, intent="console", return_to="/console"):
     """Drive login → callback; returns the callback redirect Location."""
     r = await client.get(f"/api/auth/login?intent={intent}&return_to={quote(return_to, safe='')}")
@@ -136,6 +160,7 @@ async def test_new_console_signup_gets_own_fresh_org(client, workos):
     from app.db.session import SessionLocal
 
     email = f"founder-{uuid.uuid4().hex[:8]}@newco.dev"
+    await _allow(email)
     location = await _login(
         client, workos, _wuser(email, first="Nia", last="Founder", picture="https://img/x.png")
     )
@@ -165,6 +190,7 @@ async def test_email_link_attaches_workos_id_to_seeded_admin(client, workos):
     from app.db.session import SessionLocal
 
     workos_id = f"user_{uuid.uuid4().hex[:12]}"
+    await _allow("admin@kandidly.dev")
     location = await _login(client, workos, _wuser("admin@kandidly.dev", workos_id=workos_id))
     token = await _token_from(location)
 
@@ -189,6 +215,7 @@ async def test_repeat_login_reuses_user_and_org(client, workos):
     from app.db.session import SessionLocal
 
     wuser = _wuser(f"repeat-{uuid.uuid4().hex[:8]}@newco.dev")
+    await _allow(wuser.email)
     first = await _me(client, await _token_from(await _login(client, workos, wuser)))
 
     async with SessionLocal() as db:
@@ -209,9 +236,9 @@ async def test_fresh_org_is_isolated_from_seeded_data(client, workos):
     from app.db.models import Interview, Requisition
     from app.db.session import SessionLocal
 
-    token = await _token_from(
-        await _login(client, workos, _wuser(f"iso-{uuid.uuid4().hex[:8]}@newco.dev"))
-    )
+    email = f"iso-{uuid.uuid4().hex[:8]}@newco.dev"
+    await _allow(email)
+    token = await _token_from(await _login(client, workos, _wuser(email)))
 
     r = await client.get("/api/admin/console/interviews", headers=auth(token))
     assert r.status_code == 200 and r.json() == []
@@ -306,6 +333,7 @@ async def _set_status(email: str, status: str) -> None:
 @pytest.mark.parametrize("status", ["suspended", "invited"])
 async def test_bad_status_redirects_with_error(client, workos, status):
     wuser = _wuser(f"{status}-{uuid.uuid4().hex[:8]}@mail.dev")
+    await _allow(wuser.email)
     await _token_from(await _login(client, workos, wuser))  # provision active
     await _set_status(wuser.email, status)
 
@@ -314,6 +342,10 @@ async def test_bad_status_redirects_with_error(client, workos, status):
 
 
 async def test_console_intent_rejects_candidate_account(client, workos, candidate):
+    # Allowlisted so the invite-only gate (which runs first) doesn't mask the
+    # role check: an allowlisted email that belongs to a candidate account
+    # still can't open the console.
+    await _allow(candidate.email)
     frag = _fragment(await _login(client, workos, _wuser(candidate.email), intent="console"))
     assert frag == {"error": "not_console_account"}
 
@@ -337,10 +369,12 @@ async def test_bad_code_fails_cleanly(client, workos):
 
 
 async def test_open_redirect_blocked(client, workos):
+    email = f"redir-{uuid.uuid4().hex[:8]}@x.dev"
+    await _allow(email)
     location = await _login(
         client,
         workos,
-        _wuser(f"redir-{uuid.uuid4().hex[:8]}@x.dev"),
+        _wuser(email),
         return_to="https://evil.example/phish",
     )
     assert unquote(parse_qs(urlsplit(location).query)["next"][0]) == "/"
@@ -350,9 +384,9 @@ async def test_open_redirect_blocked(client, workos):
 # app-JWT lifecycle
 # --------------------------------------------------------------------------- #
 async def test_minted_jwt_logout_denylist(client, workos):
-    token = await _token_from(
-        await _login(client, workos, _wuser(f"bye-{uuid.uuid4().hex[:8]}@x.dev"))
-    )
+    email = f"bye-{uuid.uuid4().hex[:8]}@x.dev"
+    await _allow(email)
+    token = await _token_from(await _login(client, workos, _wuser(email)))
     assert (await client.get("/api/auth/me", headers=auth(token))).status_code == 200
 
     r = await client.post("/api/auth/logout", headers=auth(token))
@@ -368,6 +402,7 @@ async def test_logout_ends_workos_session_too(client, workos):
     own JWT — otherwise AuthKit's SSO cookie survives and a later /login
     silently re-authenticates the same account without prompting."""
     wuser = _wuser(f"bye2-{uuid.uuid4().hex[:8]}@x.dev")
+    await _allow(wuser.email)
     token = await _token_from(await _login(client, workos, wuser))
 
     r = await client.post("/api/auth/logout?return_to=/console", headers=auth(token))

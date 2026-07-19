@@ -66,6 +66,16 @@ export function isAdmin(): boolean {
   return user?.role === 'admin' || user?.role === 'recruiter';
 }
 
+// Hardcoded on purpose (matches the backend gate, backend/app/domain/access.py)
+// — one operator account owns the operator-only console surfaces (interview
+// deletion, email smoke test, the console-access allowlist). The backend
+// enforces this with 403s; the frontend only uses it to hide those surfaces.
+export const OPERATOR_EMAIL = 'vishalkhare39@gmail.com';
+
+export function isOperator(): boolean {
+  return getUser()?.email?.toLowerCase() === OPERATOR_EMAIL;
+}
+
 export function isCandidate(): boolean {
   const user = getUser();
   return user?.role === 'candidate';

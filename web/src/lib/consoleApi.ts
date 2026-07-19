@@ -165,6 +165,26 @@ export interface InvitationsQuery {
   limit?: number;
 }
 
+/* ── console-access allowlist (operator-only, /console/access) ────────────── */
+
+export interface AllowlistEntryWire {
+  id: string;
+  email: string;
+  created_at: string;
+}
+
+export interface AllowlistWire {
+  items: AllowlistEntryWire[];
+  /** Always allowed implicitly (backend hardcode); shown pinned in the UI. */
+  operator_email: string;
+}
+
+export interface AllowlistAddWire {
+  entry: AllowlistEntryWire;
+  /** false when the email was already on the list. */
+  created: boolean;
+}
+
 export interface CatalogWire {
   domains: string[];
   skills: string[];
@@ -535,6 +555,14 @@ export const consoleApi = {
   resendInvite: async (reqId: string, inviteId: string): Promise<void> => {
     await api.post(`/api/admin/console/requisitions/${reqId}/invites/${inviteId}/resend`);
   },
+  /* console-access allowlist — 403s for every account except the operator */
+  getAllowlist: async (): Promise<AllowlistWire> =>
+    (await api.get<AllowlistWire>('/api/admin/console/allowlist')).data,
+  addAllowlistEntry: async (email: string): Promise<AllowlistAddWire> =>
+    (await api.post<AllowlistAddWire>('/api/admin/console/allowlist', { email })).data,
+  removeAllowlistEntry: async (entryId: string): Promise<void> => {
+    await api.delete(`/api/admin/console/allowlist/${entryId}`);
+  },
 };
 
 /* ── query hooks ──────────────────────────────────────────────────────────── */
@@ -712,6 +740,29 @@ export function useRevokeInvitation() {
       });
     },
   });
+}
+
+/** Console-access allowlist (operator-only page). */
+export function useAllowlist(enabled = true) {
+  return useQuery({
+    queryKey: ['console', 'allowlist'],
+    queryFn: consoleApi.getAllowlist,
+    enabled,
+  });
+}
+
+export function useAllowlistMutations() {
+  const queryClient = useQueryClient();
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: ['console', 'allowlist'] });
+  const add = useMutation({
+    mutationFn: (email: string) => consoleApi.addAllowlistEntry(email),
+    onSettled: invalidate,
+  });
+  const remove = useMutation({
+    mutationFn: (entryId: string) => consoleApi.removeAllowlistEntry(entryId),
+    onSettled: invalidate,
+  });
+  return { add, remove };
 }
 
 export function useDeleteInterview() {

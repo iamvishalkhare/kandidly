@@ -1,4 +1,6 @@
-"""JIT user provisioning from a WorkOS AuthKit login (open signup).
+"""JIT user provisioning from a WorkOS AuthKit login. Candidate signup is
+open; console signup only happens for emails that already passed the
+invite-only allowlist gate (domain/access.py, checked in api/auth.py).
 
 Match order: `users.workos_user_id`, else email (links pre-WorkOS seeded/dev
 rows by stamping their workos_user_id), else create. New *console* signups get

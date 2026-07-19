@@ -32,6 +32,7 @@ from app.db.models import (
     Application,
     AuditLog,
     CatalogEntry,
+    ConsoleAllowlistEntry,
     Evaluation,
     EvidenceNote,
     FormSubmission,
@@ -56,6 +57,7 @@ from app.db.models import (
 )
 from app.domain import interview_context
 from app.domain import invites as invites_domain
+from app.domain.access import OPERATOR_EMAIL
 from app.domain.audit import record_audit
 from app.domain.builder import (
     builder_fields_to_schema,
@@ -1300,17 +1302,15 @@ async def get_console_review(
 
 
 # Operator-only surface: interview deletion (destructive — DB + S3 + Redis,
-# scoped after the 2026-07-19 stuck-interview incident) and the email smoke
-# test (sends real mail in prod). Deliberately hardcoded to one account rather
-# than a role, per explicit product decision: every other console user gets a
-# 403 here even though they pass the `_admin` role guard.
-_OPERATOR_EMAIL = "vishalkhare39@gmail.com"
-
-
+# scoped after the 2026-07-19 stuck-interview incident), the email smoke test
+# (sends real mail in prod), and the console-access allowlist. Deliberately
+# hardcoded to one account (domain/access.py) rather than a role, per explicit
+# product decision: every other console user gets a 403 here even though they
+# pass the `_admin` role guard.
 async def _ensure_operator(db: AsyncSession, user: AuthUser, what: str) -> None:
     row = await db.get(User, user.user_id)
     email = (row.email if row else user.email) or ""
-    if email.lower() != _OPERATOR_EMAIL:
+    if email.lower() != OPERATOR_EMAIL:
         raise AppError("forbidden", f"{what} is not available for this account")
 
 
@@ -2051,3 +2051,100 @@ async def send_test_email(
         "message_id": message_id,
         "subject": rendered.subject,
     }
+
+
+# --------------------------------------------------------------------------- #
+# Console-access allowlist (operator-only)
+# --------------------------------------------------------------------------- #
+# The product is invite-only: only these emails (plus the operator hardcode)
+# can complete a console-intent login — enforced in api/auth.py via
+# domain/access.py. Removal blocks the *next* sign-in; an already-minted app
+# JWT keeps working until it expires or the user logs out.
+
+
+class AllowlistEntryOut(BaseModel):
+    id: UUID
+    email: str
+    created_at: datetime
+
+
+class AllowlistOut(BaseModel):
+    items: list[AllowlistEntryOut]
+    operator_email: str  # always allowed implicitly; shown pinned in the UI
+
+
+class AllowlistAddIn(BaseModel):
+    email: str
+
+
+class AllowlistAddOut(BaseModel):
+    entry: AllowlistEntryOut
+    created: bool  # false when the email was already on the list
+
+
+def _allowlist_out(row: ConsoleAllowlistEntry) -> AllowlistEntryOut:
+    return AllowlistEntryOut(id=row.id, email=row.email, created_at=row.created_at)
+
+
+@router.get("/allowlist", response_model=AllowlistOut)
+async def list_allowlist(
+    user: AuthUser = _admin, db: AsyncSession = Depends(get_db)
+) -> AllowlistOut:
+    await _ensure_operator(db, user, "Access management")
+    rows = (
+        (
+            await db.execute(
+                select(ConsoleAllowlistEntry).order_by(ConsoleAllowlistEntry.created_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return AllowlistOut(items=[_allowlist_out(r) for r in rows], operator_email=OPERATOR_EMAIL)
+
+
+@router.post("/allowlist", response_model=AllowlistAddOut)
+async def add_allowlist_entry(
+    body: AllowlistAddIn, user: AuthUser = _admin, db: AsyncSession = Depends(get_db)
+) -> AllowlistAddOut:
+    await _ensure_operator(db, user, "Access management")
+    email = invites_domain.normalize_email(body.email)
+    if email is None:
+        raise AppError("validation_error", "That doesn't look like a valid email address")
+    existing = (
+        await db.execute(select(ConsoleAllowlistEntry).where(ConsoleAllowlistEntry.email == email))
+    ).scalar_one_or_none()
+    if existing is not None:
+        return AllowlistAddOut(entry=_allowlist_out(existing), created=False)
+    entry = ConsoleAllowlistEntry(id=new_id(), email=email, added_by=user.user_id)
+    db.add(entry)
+    await db.flush()
+    await record_audit(
+        db,
+        actor_id=user.user_id,
+        action="allowlist.add",
+        entity_type="console_allowlist",
+        entity_id=entry.id,
+        meta={"email": email},
+    )
+    return AllowlistAddOut(entry=_allowlist_out(entry), created=True)
+
+
+@router.delete("/allowlist/{entry_id}")
+async def remove_allowlist_entry(
+    entry_id: UUID, user: AuthUser = _admin, db: AsyncSession = Depends(get_db)
+) -> dict:
+    await _ensure_operator(db, user, "Access management")
+    entry = await db.get(ConsoleAllowlistEntry, entry_id)
+    if entry is None:
+        raise AppError("not_found", "Allowlist entry not found")
+    await db.delete(entry)
+    await record_audit(
+        db,
+        actor_id=user.user_id,
+        action="allowlist.remove",
+        entity_type="console_allowlist",
+        entity_id=entry_id,
+        meta={"email": entry.email},
+    )
+    return {"ok": True}

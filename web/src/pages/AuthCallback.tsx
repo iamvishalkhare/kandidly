@@ -20,6 +20,7 @@ import { Button, Spinner } from '../components/ui';
 const ERROR_COPY: Record<string, { title: string; body: string }> = {
   auth_failed:           { title: 'Sign-in failed',        body: 'Something went wrong while signing you in. Please try again.' },
   state_mismatch:        { title: 'Sign-in expired',       body: 'This sign-in attempt expired or was already used. Please start again.' },
+  not_allowlisted:       { title: 'Access is invite-only', body: 'Kandidly is currently invite-only and this email hasn’t been granted console access. If you were expecting access, contact the person who invited you.' },
   account_suspended:     { title: 'Account suspended',     body: 'Your account has been suspended. Contact your administrator or recruiter for help.' },
   account_invited:       { title: 'Invitation pending',    body: 'This account has a pending invitation. Use the invitation you received to activate it first.' },
   not_console_account:   { title: 'Not a console account', body: 'This email belongs to a candidate account, so it can’t open the console. If you received an interview link, open it directly.' },

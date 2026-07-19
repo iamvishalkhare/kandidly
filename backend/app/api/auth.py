@@ -11,9 +11,13 @@ The JWT rides in the URL *fragment* deliberately — fragments never leave the
 browser (no server logs, no Referer leakage), and the SPA reads + clears it
 immediately. Simpler than a second exchange-code hop and safe enough given the
 token already only lives in localStorage. Failures redirect with
-`#error=<code>` (auth_failed | state_mismatch | account_suspended |
-account_invited | not_console_account | not_candidate_account) so the SPA can
-show a clean error screen.
+`#error=<code>` (auth_failed | state_mismatch | not_allowlisted |
+account_suspended | account_invited | not_console_account |
+not_candidate_account) so the SPA can show a clean error screen.
+
+Console sign-in is invite-only: the email must pass domain/access.py's
+allowlist check *before* JIT provisioning, so uninvited sign-ins never
+create user/org rows. Candidate sign-ins are not gated.
 
 Logout denylists the presented bearer in Redis (kills our own session) *and*
 ends the WorkOS AuthKit hosted session (kills its SSO cookie) — skipping the
@@ -39,6 +43,7 @@ from app.core.ratelimit import rate_limit
 from app.core.security import AuthUser, mint_app_jwt, revoke_token
 from app.core.workos_client import get_client
 from app.db.models import User
+from app.domain.access import console_login_allowed
 from app.domain.audit import record_audit
 from app.domain.provisioning import provision_workos_user
 from app.schemas.api import MeOut
@@ -111,6 +116,8 @@ async def callback(
         return _spa_error("auth_failed")
 
     intent = st.get("intent", "console")
+    if intent == "console" and not await console_login_allowed(db, auth_resp.user.email):
+        return _spa_error("not_allowlisted")
     result = await provision_workos_user(db, auth_resp.user, intent)
     user = result.user
 
