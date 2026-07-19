@@ -180,6 +180,40 @@ async def test_allowlist_removal_kills_live_sessions(client, workos, operator_he
     assert (await client.post("/api/auth/logout", headers=auth(token))).status_code == 200
 
 
+async def test_allowlist_add_sends_invite_email(client, operator_headers, jobs):
+    """A fresh allowlist add emails the invitee (console_invite: inviter +
+    landing-page link); the idempotent re-add must not email again."""
+    from app.core.config import settings
+    from app.domain.access import OPERATOR_EMAIL
+
+    email = f"emailed-{uuid.uuid4().hex[:8]}@mail.dev"
+    r = await client.post(
+        "/api/admin/console/allowlist", json={"email": email}, headers=operator_headers
+    )
+    assert r.status_code == 200 and r.json()["created"] is True
+
+    sends = [c for c in jobs if c[0] == "send_email"]
+    assert len(sends) == 1
+    to, template, context = sends[0][1]
+    assert to == email
+    assert template == "console_invite"
+    # Inviter is the operator row's display_name, falling back to the token's
+    # email when the row has none (fresh-DB case).
+    from app.db.models import User
+    from app.db.session import SessionLocal
+
+    async with SessionLocal() as db:
+        row = (await db.execute(select(User).where(User.email == OPERATOR_EMAIL))).scalar_one()
+    assert context["inviter_name"] == (row.display_name or OPERATOR_EMAIL)
+    assert context["landing_url"] == settings.base_url_web
+
+    r = await client.post(
+        "/api/admin/console/allowlist", json={"email": email}, headers=operator_headers
+    )
+    assert r.status_code == 200 and r.json()["created"] is False
+    assert len([c for c in jobs if c[0] == "send_email"]) == 1
+
+
 async def test_allowlist_rejects_invalid_email(client, operator_headers):
     r = await client.post(
         "/api/admin/console/allowlist", json={"email": "not-an-email"}, headers=operator_headers

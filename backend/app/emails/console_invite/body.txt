@@ -1,0 +1,11 @@
+{% extends "base.txt" %}
+{% block content %}
+{{ inviter_name }} has invited you to use Kandidly AI.
+
+Kandidly runs AI voice interviews for your open roles and turns them into
+scored, reviewable reports. Your access is ready — sign in with this email
+address to get started.
+
+Get started:
+{{ landing_url }}
+{% endblock %}

@@ -33,6 +33,10 @@ COMPLETED_CTX = {
     "org_name": "Acme Talent",
     "interview_name": "Backend Engineer Screen",
 }
+CONSOLE_CTX = {
+    "inviter_name": "Alex Rivera",
+    "landing_url": "https://kandidly.example.com",
+}
 BRAND_CTX = {
     "brand_name": "Acme Talent",
     "brand_logo_url": "https://cdn.example.com/acme-logo.png",
@@ -57,6 +61,7 @@ def _console_default(monkeypatch):
     ("template", "context"),
     [
         ("org_invite", ORG_CTX),
+        ("console_invite", CONSOLE_CTX),
         ("candidate_invite", CAND_CTX),
         ("interview_completed", COMPLETED_CTX),
     ],
@@ -76,6 +81,10 @@ def test_subjects():
     assert (
         email_core.render_email("org_invite", ORG_CTX).subject
         == "Alex Rivera invited you to Acme Talent on Kandidly"
+    )
+    assert (
+        email_core.render_email("console_invite", CONSOLE_CTX).subject
+        == "Alex Rivera has invited you to Kandidly AI"
     )
     assert (
         email_core.render_email("candidate_invite", CAND_CTX).subject

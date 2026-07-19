@@ -1996,6 +1996,10 @@ _TEST_EMAIL_CONTEXTS: dict[str, dict] = {
         "accept_url": "{base}/console",
         "expiry_note": "This invitation expires in 7 days.",
     },
+    "console_invite": {
+        "inviter_name": "Alex Rivera",
+        "landing_url": "{base}",
+    },
     "candidate_invite": {
         "org_name": "Acme Talent",
         "interview_name": "Backend Engineer Screen",
@@ -2016,7 +2020,7 @@ _TEST_EMAIL_CONTEXTS: dict[str, dict] = {
 
 
 class TestEmailIn(BaseModel):
-    template: Literal["org_invite", "candidate_invite", "interview_completed"]
+    template: Literal["org_invite", "console_invite", "candidate_invite", "interview_completed"]
     to: str = Field(min_length=3, pattern=r".+@.+")
 
 
@@ -2126,6 +2130,19 @@ async def add_allowlist_entry(
         entity_type="console_allowlist",
         entity_id=entry.id,
         meta={"email": email},
+    )
+    inviter = await db.get(User, user.user_id)
+    # Commit before enqueueing (the established ordering, see deploy/invites) —
+    # a failed write must not still email the invitee.
+    await db.commit()
+    await enqueue(
+        "send_email",
+        email,
+        "console_invite",
+        {
+            "inviter_name": (inviter.display_name if inviter else None) or user.email,
+            "landing_url": settings.base_url_web,
+        },
     )
     return AllowlistAddOut(entry=_allowlist_out(entry), created=True)
 
