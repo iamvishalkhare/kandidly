@@ -1,0 +1,25 @@
+{# Shared layout. Brand integration is an upcoming feature — every template
+   accepts optional brand_name / brand_logo_url / brand_url in its context and
+   falls back to an unlinked "Kandidly" text header when they're absent.
+   Inline styles only: email clients strip <style>. #}
+{% set brand = brand_name | default("Kandidly") %}
+{% set brand_logo = brand_logo_url | default("") %}
+{% set brand_link = brand_url | default("") %}
+<div style="margin:0;padding:24px 12px;background-color:#f4f4f5;font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <div style="max-width:560px;margin:0 auto;">
+    <div style="padding:16px 4px;">
+      {% if brand_link %}<a href="{{ brand_link }}" style="text-decoration:none;color:#18181b;">{% endif %}
+      {% if brand_logo %}<img src="{{ brand_logo }}" alt="{{ brand }}" height="32" style="display:block;max-height:32px;border:0;">
+      {% else %}<span style="font-size:18px;font-weight:700;color:#18181b;">{{ brand }}</span>
+      {% endif %}
+      {% if brand_link %}</a>{% endif %}
+    </div>
+    <div style="background-color:#ffffff;border:1px solid #e4e4e7;border-radius:8px;padding:28px 28px 24px;color:#27272a;font-size:15px;line-height:1.6;">
+{% block content %}{% endblock %}
+    </div>
+    <div style="padding:16px 4px;font-size:12px;line-height:1.5;color:#71717a;">
+      This is an automated message from {{ brand }}. Replies to this address are not monitored.
+      {% if brand_link %}<br><a href="{{ brand_link }}" style="color:#71717a;">{{ brand_link }}</a>{% endif %}
+    </div>
+  </div>
+</div>

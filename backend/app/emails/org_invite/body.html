@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block content %}
+      <p style="margin:0 0 16px;"><strong>{{ inviter_name }}</strong> has invited you to join <strong>{{ org_name }}</strong> on Kandidly.</p>
+      <p style="margin:0 0 24px;">Kandidly runs AI voice interviews for your open roles and turns them into scored, reviewable reports.</p>
+      <p style="margin:0 0 24px;">
+        <a href="{{ accept_url }}" style="display:inline-block;background-color:#18181b;color:#ffffff;text-decoration:none;padding:10px 20px;border-radius:6px;font-weight:600;">Accept invitation</a>
+      </p>
+      <p style="margin:0 0 8px;font-size:13px;color:#71717a;">Or paste this link into your browser:<br>{{ accept_url }}</p>
+      <p style="margin:0;font-size:13px;color:#71717a;">{{ expiry_note }}</p>
+{% endblock %}

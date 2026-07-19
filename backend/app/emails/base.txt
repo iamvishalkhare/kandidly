@@ -1,0 +1,11 @@
+{% set brand = brand_name | default("Kandidly") %}
+{% set brand_link = brand_url | default("") %}
+{{ brand }}
+
+{% block content %}{% endblock %}
+
+--
+This is an automated message from {{ brand }}. Replies to this address are not monitored.
+{% if brand_link %}
+{{ brand_link }}
+{% endif %}
