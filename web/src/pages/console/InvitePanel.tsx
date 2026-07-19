@@ -1,12 +1,14 @@
 /**
  * Guest list for invite-only requisitions (Requisition Builder — Access &
- * Invitations). Lists invited candidates with email-delivery + pipeline
- * status, inline single add (email / first / last), per-row resend & revoke,
- * and a bulk CSV/XLSX upload modal over a blurred backdrop.
+ * Invitations). Search-first: the invited candidates are never listed in
+ * full — a debounced autocomplete over name + email shows the top 3 matches
+ * (with delivery + pipeline status and resend/revoke), which keeps the panel
+ * identical at 10 invites or 10,000. Inline single add and a bulk CSV/XLSX
+ * upload modal over a blurred backdrop handle getting candidates in.
  */
 
-import { useRef, useState } from 'react';
-import { FileSpreadsheet, Mail, Plus, RefreshCw, Trash2, Upload, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { FileSpreadsheet, Mail, Plus, RefreshCw, Search, Trash2, Upload, X } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { Spinner, useToast } from '../../components/ui';
 import {
@@ -41,7 +43,15 @@ function mutationSummary(result: InvitesMutationWire): string {
 
 export default function InvitePanel({ requisitionId, live }: { requisitionId: string; live: boolean }) {
   const { toast } = useToast();
-  const { data: invites, isPending } = useInvites(requisitionId);
+  const [search, setSearch] = useState('');
+  const [query, setQuery] = useState('');
+  // Debounce keystrokes so autocomplete doesn't fire a request per character.
+  useEffect(() => {
+    const timer = setTimeout(() => setQuery(search.trim()), 250);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  const { data, isPending } = useInvites(requisitionId, query);
   const { add, importFile, revoke, resend } = useInviteMutations(requisitionId);
 
   const [email, setEmail] = useState('');
@@ -70,11 +80,13 @@ export default function InvitePanel({ requisitionId, live }: { requisitionId: st
     });
   };
 
+  const results = query ? (data?.items ?? []) : [];
+
   return (
     <div className="mt-4 border border-outline-variant">
       <div className="flex items-center justify-between gap-3 p-3 border-b border-outline-variant bg-surface-container/40">
         <span className="label-mono text-on-surface-variant">
-          Invited candidates{invites ? ` — ${invites.length}` : ''}
+          Invited candidates{data ? ` — ${data.total}` : ''}
         </span>
         <button
           type="button"
@@ -121,75 +133,101 @@ export default function InvitePanel({ requisitionId, live }: { requisitionId: st
         </button>
       </div>
 
-      {/* List */}
+      {/* Search-first lookup */}
       {isPending ? (
         <div className="flex justify-center py-8">
           <Spinner size={18} />
         </div>
-      ) : !invites?.length ? (
+      ) : data?.total === 0 ? (
         <p className="p-4 text-body-md text-on-surface-variant">
           No candidates invited yet. Only invited email addresses will be able to start this
           interview.
         </p>
       ) : (
-        <ul>
-          {invites.map(invite => (
-            <li
-              key={invite.id}
-              className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2.5 border-b border-outline-variant last:border-b-0"
-            >
-              <div className="min-w-0 flex-1">
-                <p className="text-body-md text-on-surface truncate">
-                  {[invite.first_name, invite.last_name].filter(Boolean).join(' ') || '—'}
-                </p>
-                <p className="text-body-md text-on-surface-variant truncate">{invite.email}</p>
-              </div>
-              <span
-                className={cn(
-                  'px-2 py-0.5 border label-mono uppercase',
-                  STATUS_STYLES[invite.status],
-                )}
-              >
-                {invite.status}
-              </span>
-              <span
-                className={cn(
-                  'flex items-center gap-1.5 label-mono',
-                  invite.email_status === 'failed' ? 'text-red-600' : 'text-on-surface-variant',
-                )}
-                title={invite.last_emailed_at ?? undefined}
-              >
-                <Mail size={13} />
-                {DELIVERY_LABELS[invite.email_status]}
-              </span>
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  title="Resend invitation email"
-                  onClick={() =>
-                    resend.mutate(invite.id, {
-                      onSuccess: () =>
-                        toast(live ? 'Invitation email resent.' : 'Queued — sends on deploy.'),
-                    })
-                  }
-                  className="p-1.5 text-on-surface-variant hover:text-primary-fixed-dim transition-colors duration-150"
+        <div className="p-3 space-y-2">
+          <div className="relative">
+            <Search
+              size={15}
+              className="absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant pointer-events-none"
+            />
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search invited candidates by name or email…"
+              className="w-full pl-9 pr-3 py-2 border border-outline-variant bg-surface text-body-md text-on-surface placeholder:text-on-surface-variant/60 focus:outline-none focus:border-primary-container"
+              aria-label="Search invited candidates"
+            />
+          </div>
+
+          {!query ? (
+            <p className="text-body-md text-on-surface-variant px-1">
+              Type a name or email to look up an invited candidate. Top 3 matches are shown.
+            </p>
+          ) : results.length === 0 ? (
+            <p className="text-body-md text-on-surface-variant px-1">
+              No invited candidate matches “{query}”.
+            </p>
+          ) : (
+            <ul className="border border-outline-variant">
+              {results.map(invite => (
+                <li
+                  key={invite.id}
+                  className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2.5 border-b border-outline-variant last:border-b-0"
                 >
-                  <RefreshCw size={15} />
-                </button>
-                <button
-                  type="button"
-                  title="Revoke invite"
-                  onClick={() =>
-                    revoke.mutate(invite.id, { onSuccess: () => toast('Invite revoked.') })
-                  }
-                  className="p-1.5 text-on-surface-variant hover:text-red-600 transition-colors duration-150"
-                >
-                  <Trash2 size={15} />
-                </button>
-              </div>
-            </li>
-          ))}
-        </ul>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-body-md text-on-surface truncate">
+                      {[invite.first_name, invite.last_name].filter(Boolean).join(' ') || '—'}
+                    </p>
+                    <p className="text-body-md text-on-surface-variant truncate">{invite.email}</p>
+                  </div>
+                  <span
+                    className={cn(
+                      'px-2 py-0.5 border label-mono uppercase',
+                      STATUS_STYLES[invite.status],
+                    )}
+                  >
+                    {invite.status}
+                  </span>
+                  <span
+                    className={cn(
+                      'flex items-center gap-1.5 label-mono',
+                      invite.email_status === 'failed' ? 'text-red-600' : 'text-on-surface-variant',
+                    )}
+                    title={invite.last_emailed_at ?? undefined}
+                  >
+                    <Mail size={13} />
+                    {DELIVERY_LABELS[invite.email_status]}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      title="Resend invitation email"
+                      onClick={() =>
+                        resend.mutate(invite.id, {
+                          onSuccess: () =>
+                            toast(live ? 'Invitation email resent.' : 'Queued — sends on deploy.'),
+                        })
+                      }
+                      className="p-1.5 text-on-surface-variant hover:text-primary-fixed-dim transition-colors duration-150"
+                    >
+                      <RefreshCw size={15} />
+                    </button>
+                    <button
+                      type="button"
+                      title="Revoke access"
+                      onClick={() =>
+                        revoke.mutate(invite.id, { onSuccess: () => toast('Access revoked.') })
+                      }
+                      className="p-1.5 text-on-surface-variant hover:text-red-600 transition-colors duration-150"
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       )}
 
       {modalOpen && (

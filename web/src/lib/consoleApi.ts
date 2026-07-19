@@ -4,7 +4,13 @@
  * the console pages already render (Requisition, InterviewRecord, …).
  */
 
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import { api } from './api';
 import type { AccountOut, UsageOut } from './types';
 import type { Requisition } from '../pages/console/requisitionData';
@@ -101,6 +107,13 @@ export interface InviteWire {
   last_emailed_at: string | null;
   created_at: string;
   status: 'invited' | 'claimed' | 'completed';
+}
+
+export interface InvitesSearchWire {
+  /** Top matches for the query (server caps at 3); empty when q is empty. */
+  items: InviteWire[];
+  /** Active invites on the requisition, independent of the query. */
+  total: number;
 }
 
 export interface InvitesMutationWire {
@@ -443,9 +456,13 @@ export const consoleApi = {
   },
   getDashboard: async (): Promise<ConsoleDashboardWire> =>
     (await api.get<ConsoleDashboardWire>('/api/admin/console/dashboard')).data,
-  /* invite-only guest list */
-  getInvites: async (reqId: string): Promise<InviteWire[]> =>
-    (await api.get<InviteWire[]>(`/api/admin/console/requisitions/${reqId}/invites`)).data,
+  /* invite-only guest list (search-first: empty q returns only the total) */
+  searchInvites: async (reqId: string, q: string): Promise<InvitesSearchWire> =>
+    (
+      await api.get<InvitesSearchWire>(
+        `/api/admin/console/requisitions/${reqId}/invites?q=${encodeURIComponent(q)}&limit=3`,
+      )
+    ).data,
   addInvites: async (reqId: string, invites: InviteIn[]): Promise<InvitesMutationWire> =>
     (
       await api.post<InvitesMutationWire>(`/api/admin/console/requisitions/${reqId}/invites`, {
@@ -584,15 +601,18 @@ export function useConsoleDashboard() {
   return useQuery({ queryKey: ['console', 'dashboard'], queryFn: consoleApi.getDashboard });
 }
 
-/** Guest list for an invite-only requisition. Polls lightly while any invite
- * email is still queued so delivery states settle on their own. */
-export function useInvites(reqId: string | undefined) {
+/** Guest-list autocomplete for an invite-only requisition. An empty query
+ * still runs (it carries the total for the header) but returns no rows.
+ * Polls lightly while any shown invite email is still queued so delivery
+ * states settle on their own. */
+export function useInvites(reqId: string | undefined, q: string) {
   return useQuery({
-    queryKey: ['console', 'requisitions', reqId, 'invites'],
-    queryFn: () => consoleApi.getInvites(reqId!),
+    queryKey: ['console', 'requisitions', reqId, 'invites', q],
+    queryFn: () => consoleApi.searchInvites(reqId!, q),
     enabled: !!reqId,
+    placeholderData: keepPreviousData,
     refetchInterval: query =>
-      query.state.data?.some(i => i.email_status === 'queued') ? 8_000 : false,
+      query.state.data?.items.some(i => i.email_status === 'queued') ? 8_000 : false,
   });
 }
 

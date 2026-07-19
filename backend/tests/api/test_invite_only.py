@@ -38,6 +38,13 @@ async def _add(client, headers, req_id: str, invites: list[dict]):
     return await client.post(_invites_url(req_id), json={"invites": invites}, headers=headers)
 
 
+async def _search(client, headers, req_id: str, q: str = "") -> dict:
+    """GET the search-first invites endpoint: {items: [...], total: n}."""
+    r = await client.get(_invites_url(req_id), params={"q": q}, headers=headers)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
 # --------------------------------------------------------------------------- #
 # claim enforcement
 # --------------------------------------------------------------------------- #
@@ -98,17 +105,23 @@ async def test_revoke_blocks_future_claims_but_not_mid_flight(
     claim = await client.post(f"/api/candidate/i/{req['invite_token']}/claim", headers=cand_headers)
     assert claim.status_code == 200
 
-    invites = (await client.get(_invites_url(req["id"]), headers=admin_headers)).json()
-    assert invites[0]["status"] == "claimed"
-    r = await client.delete(f"{_invites_url(req['id'])}/{invites[0]['id']}", headers=admin_headers)
+    found = await _search(client, admin_headers, req["id"], cand.email)
+    assert found["total"] == 1
+    assert found["items"][0]["status"] == "claimed"
+    r = await client.delete(
+        f"{_invites_url(req['id'])}/{found['items'][0]['id']}", headers=admin_headers
+    )
     assert r.status_code == 200
 
     # Mid-flight candidate re-enters their existing application…
     again = await client.post(f"/api/candidate/i/{req['invite_token']}/claim", headers=cand_headers)
     assert again.status_code == 200
     assert again.json()["application_id"] == claim.json()["application_id"]
-    # …and the revoked row is gone from the console list.
-    assert (await client.get(_invites_url(req["id"]), headers=admin_headers)).json() == []
+    # …and the revoked row is gone from search results and the total.
+    assert await _search(client, admin_headers, req["id"], cand.email) == {
+        "items": [],
+        "total": 0,
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -223,11 +236,9 @@ async def test_resend_requeues_email(client, admin_headers, high_requisition_cap
         req["id"],
         [{"email": f"rs-{uuid.uuid4().hex[:6]}@apitest.dev", "first_name": "R", "last_name": "S"}],
     )
-    invites = (await client.get(_invites_url(req["id"]), headers=admin_headers)).json()
+    invite = (await _search(client, admin_headers, req["id"], "@apitest.dev"))["items"][0]
     before = len([1 for (job, _) in jobs if job == "send_invite_email"])
-    r = await client.post(
-        f"{_invites_url(req['id'])}/{invites[0]['id']}/resend", headers=admin_headers
-    )
+    r = await client.post(f"{_invites_url(req['id'])}/{invite['id']}/resend", headers=admin_headers)
     assert r.status_code == 200, r.text
     assert len([1 for (job, _) in jobs if job == "send_invite_email"]) == before + 1
 
@@ -270,6 +281,36 @@ async def test_send_invite_email_job_delivers_and_stamps_status(
         refreshed = await db.get(RequisitionInvite, invite.id)
         assert refreshed.email_status == "sent"
         assert refreshed.last_emailed_at is not None
+
+
+async def test_search_autocomplete_matches_name_and_email_capped_at_limit(
+    client, admin_headers, high_requisition_cap, jobs
+):
+    req = await deploy_requisition(client, admin_headers, invite_only=True)
+    await _add(
+        client,
+        admin_headers,
+        req["id"],
+        [
+            {"email": f"zeta{i}@apitest.dev", "first_name": "Pat", "last_name": f"Zeta{i}"}
+            for i in range(5)
+        ],
+    )
+
+    # Empty query: total only, never the list (search-first panel contract).
+    empty = await _search(client, admin_headers, req["id"])
+    assert empty["total"] == 5 and empty["items"] == []
+
+    # Name substring, case-insensitive, capped at the top 3.
+    by_name = await _search(client, admin_headers, req["id"], "pat zeta")
+    assert by_name["total"] == 5
+    assert len(by_name["items"]) == 3
+
+    # Email fragment pins a single candidate.
+    by_email = await _search(client, admin_headers, req["id"], "zeta3@")
+    assert [i["email"] for i in by_email["items"]] == ["zeta3@apitest.dev"]
+
+    assert (await _search(client, admin_headers, req["id"], "no-such-person"))["items"] == []
 
 
 async def test_unknown_requisition_invites_404(client, admin_headers):
@@ -330,6 +371,6 @@ async def test_completed_application_shows_in_invite_status(
         )
         assert r.status_code == 200, r.text
 
-    invites = (await client.get(_invites_url(req["id"]), headers=admin_headers)).json()
-    assert invites[0]["email"] == candidate.email.lower()
-    assert invites[0]["status"] == "completed"
+    found = await _search(client, admin_headers, req["id"], candidate.email)
+    assert found["items"][0]["email"] == candidate.email.lower()
+    assert found["items"][0]["status"] == "completed"

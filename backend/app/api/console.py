@@ -16,7 +16,7 @@ import structlog
 from fastapi import APIRouter, Depends, File, UploadFile
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import delete as sa_delete
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1558,51 +1558,86 @@ async def _add_invites(
     return new_ids, duplicates
 
 
-@router.get("/requisitions/{req_id}/invites", response_model=list[InviteOut])
-async def list_invites(
-    req_id: UUID, user: AuthUser = _admin, db: AsyncSession = Depends(get_db)
-) -> list[InviteOut]:
+class InvitesSearchOut(BaseModel):
+    items: list[InviteOut]
+    total: int  # active invites on the requisition (independent of the query)
+
+
+@router.get("/requisitions/{req_id}/invites", response_model=InvitesSearchOut)
+async def search_invites(
+    req_id: UUID,
+    q: str = "",
+    limit: int = 3,
+    user: AuthUser = _admin,
+    db: AsyncSession = Depends(get_db),
+) -> InvitesSearchOut:
+    """Autocomplete over the guest list: case-insensitive substring match on
+    email and full name, newest first, capped at `limit`. The panel is
+    search-first — an empty query returns only the total, never the list —
+    so a multi-thousand guest list is never shipped to the browser."""
     req = await _get_live_requisition(db, req_id, await _org_id_for(db, user))
+    active = (
+        RequisitionInvite.requisition_id == req.id,
+        RequisitionInvite.revoked_at.is_(None),
+    )
+    total = (
+        await db.execute(select(func.count()).select_from(RequisitionInvite).where(*active))
+    ).scalar_one()
+    query = q.strip()
+    if not query:
+        return InvitesSearchOut(items=[], total=total)
+
+    pattern = f"%{query}%"
+    full_name = RequisitionInvite.first_name + " " + RequisitionInvite.last_name
     invites = (
         (
             await db.execute(
                 select(RequisitionInvite)
                 .where(
-                    RequisitionInvite.requisition_id == req.id,
-                    RequisitionInvite.revoked_at.is_(None),
+                    *active,
+                    or_(RequisitionInvite.email.ilike(pattern), full_name.ilike(pattern)),
                 )
                 .order_by(RequisitionInvite.created_at.desc())
+                .limit(max(1, min(limit, 10)))
             )
         )
         .scalars()
         .all()
     )
-    app_rows = (
-        await db.execute(
-            select(func.lower(User.email), Application.state)
-            .join(User, Application.candidate_id == User.id)
-            .where(Application.requisition_id == req.id)
-        )
-    ).all()
+    # Pipeline progress only for the handful of matched emails.
     progress: dict[str, str] = {}
-    for email, state in app_rows:
-        if state in _COMPLETED_STATES or state == "completed":
-            progress[email] = "completed"
-        else:
-            progress.setdefault(email, "claimed")
-    return [
-        InviteOut(
-            id=i.id,
-            email=i.email,
-            first_name=i.first_name,
-            last_name=i.last_name,
-            email_status=i.email_status,
-            last_emailed_at=i.last_emailed_at,
-            created_at=i.created_at,
-            status=progress.get(i.email, "invited"),  # type: ignore[arg-type]
-        )
-        for i in invites
-    ]
+    if invites:
+        app_rows = (
+            await db.execute(
+                select(func.lower(User.email), Application.state)
+                .join(User, Application.candidate_id == User.id)
+                .where(
+                    Application.requisition_id == req.id,
+                    func.lower(User.email).in_([i.email for i in invites]),
+                )
+            )
+        ).all()
+        for email, state in app_rows:
+            if state in _COMPLETED_STATES or state == "completed":
+                progress[email] = "completed"
+            else:
+                progress.setdefault(email, "claimed")
+    return InvitesSearchOut(
+        items=[
+            InviteOut(
+                id=i.id,
+                email=i.email,
+                first_name=i.first_name,
+                last_name=i.last_name,
+                email_status=i.email_status,
+                last_emailed_at=i.last_emailed_at,
+                created_at=i.created_at,
+                status=progress.get(i.email, "invited"),  # type: ignore[arg-type]
+            )
+            for i in invites
+        ],
+        total=total,
+    )
 
 
 @router.post("/requisitions/{req_id}/invites", response_model=InvitesMutationOut)
