@@ -118,13 +118,9 @@ class ResendTransport:
         except httpx.HTTPError as exc:
             raise EmailSendError(f"resend request failed: {exc}", retryable=True) from exc
         if resp.status_code == 429 or resp.status_code >= 500:
-            raise EmailSendError(
-                f"resend {resp.status_code}: {resp.text[:500]}", retryable=True
-            )
+            raise EmailSendError(f"resend {resp.status_code}: {resp.text[:500]}", retryable=True)
         if resp.status_code >= 400:
-            raise EmailSendError(
-                f"resend {resp.status_code}: {resp.text[:500]}", retryable=False
-            )
+            raise EmailSendError(f"resend {resp.status_code}: {resp.text[:500]}", retryable=False)
         return resp.json().get("id")
 
 

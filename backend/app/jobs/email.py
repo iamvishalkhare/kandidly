@@ -25,13 +25,15 @@ async def send_email(ctx: dict, to: str, template: str, context: dict) -> None:
         if exc.retryable and job_try < MAX_TRIES:
             defer = _BACKOFF_BASE_S * 2 ** (job_try - 1)
             log.warning(
-                "email_send_retry", to=to, template=template, try_=job_try, defer_s=defer,
+                "email_send_retry",
+                to=to,
+                template=template,
+                try_=job_try,
+                defer_s=defer,
                 error=str(exc),
             )
             raise Retry(defer=defer) from exc
-        log.error(
-            "email_send_failed", to=to, template=template, tries=job_try, error=str(exc)
-        )
+        log.error("email_send_failed", to=to, template=template, tries=job_try, error=str(exc))
         return
     except Exception as exc:  # noqa: BLE001 — bad template/context: retries can't fix it
         log.error("email_render_failed", to=to, template=template, error=str(exc))
