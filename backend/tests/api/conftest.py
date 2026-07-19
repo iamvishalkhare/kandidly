@@ -206,10 +206,12 @@ def jobs(monkeypatch):
         calls.append((job, args))
 
     import app.api.candidate as candidate_api
+    import app.api.console as console_api
     import app.api.internal as internal_api
     import app.jobs.sweepers as sweepers_jobs
 
     monkeypatch.setattr(candidate_api, "enqueue", _record)
+    monkeypatch.setattr(console_api, "enqueue", _record)
     monkeypatch.setattr(internal_api, "enqueue", _record)
     monkeypatch.setattr(sweepers_jobs, "enqueue", _record)
     return calls

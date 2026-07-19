@@ -256,6 +256,41 @@ class InviteLink(Base):
     )
 
 
+class RequisitionInvite(Base):
+    """Guest list for invite-only requisitions (interview_config.invite_only).
+    Not a token: every candidate uses the requisition's single open invite
+    link — claim just checks the authenticated email against this list.
+    email is stored lowercased+trimmed; uninvite sets revoked_at (row kept
+    for audit, blocks future claims only)."""
+
+    __tablename__ = "requisition_invites"
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    requisition_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("requisitions.id"), nullable=False
+    )
+    email: Mapped[str] = mapped_column(Text, nullable=False)
+    first_name: Mapped[str] = mapped_column(Text, nullable=False)
+    last_name: Mapped[str] = mapped_column(Text, nullable=False)
+    # candidate_invite delivery: queued (not yet handed to Resend — e.g. the
+    # requisition is still a draft) | sent | failed (terminal send failure).
+    email_status: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=sa_text("'queued'")
+    )
+    last_emailed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    invited_by: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+    created_at: Mapped[datetime] = _ts_created()
+    __table_args__ = (
+        UniqueConstraint("requisition_id", "email", name="uq_requisition_invite_email"),
+        CheckConstraint(
+            "email_status IN ('queued','sent','failed')", name="ck_invite_email_status"
+        ),
+        Index("ix_invites_requisition", "requisition_id"),
+    )
+
+
 # --------------------------------------------------------------------------- #
 # 7.6 Applications
 # --------------------------------------------------------------------------- #

@@ -56,6 +56,7 @@ export interface ConsoleRequisitionWire {
   closes_at: string | null;
   created_at: string;
   invite_token: string | null;
+  invite_only: boolean;
   clicks: number;
   completed: number;
 }
@@ -79,12 +80,39 @@ export interface ConsoleRequisitionIn {
   tone: string;
   end_date: string | null;
   proctoring_enabled: boolean;
+  /** Invite-only access: only guest-listed emails can claim the (same) interview URL. */
+  invite_only: boolean;
   /** Interview length in minutes (15–90; the agent ends the interview at this cap). */
   duration_minutes: number;
   sample_questions: BuilderQuestionWire[];
   screening_fields: BuilderFieldWire[];
   rubric: BuilderCriterionWire[];
   deploy: boolean;
+}
+
+/* ── invite-only guest list ───────────────────────────────────────────────── */
+
+export interface InviteWire {
+  id: string;
+  email: string;
+  first_name: string;
+  last_name: string;
+  email_status: 'queued' | 'sent' | 'failed';
+  last_emailed_at: string | null;
+  created_at: string;
+  status: 'invited' | 'claimed' | 'completed';
+}
+
+export interface InvitesMutationWire {
+  added: number;
+  duplicates: number;
+  invalid: { row: number; reason: string }[];
+}
+
+export interface InviteIn {
+  email: string;
+  first_name: string;
+  last_name: string;
 }
 
 export interface CatalogWire {
@@ -227,6 +255,7 @@ export function toRequisition(wire: ConsoleRequisitionWire): Requisition {
     completed: wire.completed,
     live: wire.live,
     status: wire.status,
+    inviteOnly: wire.invite_only,
   };
 }
 
@@ -414,6 +443,32 @@ export const consoleApi = {
   },
   getDashboard: async (): Promise<ConsoleDashboardWire> =>
     (await api.get<ConsoleDashboardWire>('/api/admin/console/dashboard')).data,
+  /* invite-only guest list */
+  getInvites: async (reqId: string): Promise<InviteWire[]> =>
+    (await api.get<InviteWire[]>(`/api/admin/console/requisitions/${reqId}/invites`)).data,
+  addInvites: async (reqId: string, invites: InviteIn[]): Promise<InvitesMutationWire> =>
+    (
+      await api.post<InvitesMutationWire>(`/api/admin/console/requisitions/${reqId}/invites`, {
+        invites,
+      })
+    ).data,
+  importInvites: async (reqId: string, file: File): Promise<InvitesMutationWire> => {
+    const form = new FormData();
+    form.append('file', file);
+    return (
+      await api.post<InvitesMutationWire>(
+        `/api/admin/console/requisitions/${reqId}/invites/import`,
+        form,
+        { headers: { 'Content-Type': 'multipart/form-data' } },
+      )
+    ).data;
+  },
+  revokeInvite: async (reqId: string, inviteId: string): Promise<void> => {
+    await api.delete(`/api/admin/console/requisitions/${reqId}/invites/${inviteId}`);
+  },
+  resendInvite: async (reqId: string, inviteId: string): Promise<void> => {
+    await api.post(`/api/admin/console/requisitions/${reqId}/invites/${inviteId}/resend`);
+  },
 };
 
 /* ── query hooks ──────────────────────────────────────────────────────────── */
@@ -527,6 +582,41 @@ export function useReviewDecision(interviewId: string | undefined) {
 
 export function useConsoleDashboard() {
   return useQuery({ queryKey: ['console', 'dashboard'], queryFn: consoleApi.getDashboard });
+}
+
+/** Guest list for an invite-only requisition. Polls lightly while any invite
+ * email is still queued so delivery states settle on their own. */
+export function useInvites(reqId: string | undefined) {
+  return useQuery({
+    queryKey: ['console', 'requisitions', reqId, 'invites'],
+    queryFn: () => consoleApi.getInvites(reqId!),
+    enabled: !!reqId,
+    refetchInterval: query =>
+      query.state.data?.some(i => i.email_status === 'queued') ? 8_000 : false,
+  });
+}
+
+export function useInviteMutations(reqId: string | undefined) {
+  const queryClient = useQueryClient();
+  const invalidate = () =>
+    queryClient.invalidateQueries({ queryKey: ['console', 'requisitions', reqId, 'invites'] });
+  const add = useMutation({
+    mutationFn: (invites: InviteIn[]) => consoleApi.addInvites(reqId!, invites),
+    onSettled: invalidate,
+  });
+  const importFile = useMutation({
+    mutationFn: (file: File) => consoleApi.importInvites(reqId!, file),
+    onSettled: invalidate,
+  });
+  const revoke = useMutation({
+    mutationFn: (inviteId: string) => consoleApi.revokeInvite(reqId!, inviteId),
+    onSettled: invalidate,
+  });
+  const resend = useMutation({
+    mutationFn: (inviteId: string) => consoleApi.resendInvite(reqId!, inviteId),
+    onSettled: invalidate,
+  });
+  return { add, importFile, revoke, resend };
 }
 
 export function useDeleteInterview() {

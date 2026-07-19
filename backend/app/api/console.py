@@ -13,7 +13,7 @@ from typing import Literal
 from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, UploadFile
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, select
@@ -25,6 +25,8 @@ from app.core.config import settings
 from app.core.deps import get_db, require_role
 from app.core.errors import AppError
 from app.core.ids import new_id
+from app.core.queue import enqueue
+from app.core.ratelimit import rate_limit
 from app.core.security import AuthUser
 from app.db.models import (
     Application,
@@ -44,6 +46,7 @@ from app.db.models import (
     QuestionPlan,
     Report,
     Requisition,
+    RequisitionInvite,
     Rubric,
     RubricCriterion,
     ScoringJob,
@@ -52,6 +55,7 @@ from app.db.models import (
     User,
 )
 from app.domain import interview_context
+from app.domain import invites as invites_domain
 from app.domain.audit import record_audit
 from app.domain.builder import (
     builder_fields_to_schema,
@@ -119,6 +123,9 @@ class ConsoleRequisitionIn(BaseModel):
     end_date: str | None = None
     # Webcam snapshots every 10s during the interview (proctoring pipeline).
     proctoring_enabled: bool = True
+    # Access policy: True → only emails on the requisition's guest list
+    # (requisition_invites) can claim; the interview URL stays the same.
+    invite_only: bool = False
     # Interview length in minutes; the agent paces and ends the interview to
     # fit this window (stored as interview_config.max_duration_seconds).
     duration_minutes: int = Field(default=30, ge=15, le=90)
@@ -152,6 +159,7 @@ class ConsoleRequisitionOut(BaseModel):
     closes_at: datetime | None = None
     created_at: datetime
     invite_token: str | None = None
+    invite_only: bool = False
     clicks: int = 0
     completed: int = 0
 
@@ -452,6 +460,7 @@ def _req_card(r: Requisition, clicks: dict, completed: dict, tokens: dict) -> Co
         closes_at=r.closes_at,
         created_at=r.created_at,
         invite_token=tokens.get(r.id),
+        invite_only=InterviewConfig(**(r.interview_config or {})).invite_only,
         clicks=clicks.get(r.id, 0),
         completed=completed.get(r.id, 0),
     )
@@ -761,6 +770,7 @@ async def deploy_requisition(
             tone=body.tone,
             max_duration_seconds=body.duration_minutes * 60,
             proctoring=_proctoring_config(body.proctoring_enabled),
+            invite_only=body.invite_only,
         ).model_dump(),
         created_by=user.user_id,
         opens_at=datetime.now(UTC) if body.deploy else None,
@@ -860,6 +870,7 @@ async def update_requisition(
             "tone": body.tone,
             "max_duration_seconds": body.duration_minutes * 60,
             "proctoring": _proctoring_config(body.proctoring_enabled),
+            "invite_only": body.invite_only,
         }
     ).model_dump()
     req.closes_at = _closes_at_from(body.end_date)
@@ -888,6 +899,11 @@ async def update_requisition(
     # immediately re-opens the builder would read pre-commit state (e.g. skills
     # it just cleared reappear). Committing here makes the save read-your-write.
     await db.commit()
+    # Invites collected while the requisition was a draft stay 'queued' so no
+    # one is emailed a dead link; deploying releases them (post-commit: the
+    # worker must see the rows).
+    if req.status == "open":
+        await _enqueue_queued_invite_emails(db, req.id)
     return await _detail_out(db, req)
 
 
@@ -1447,6 +1463,289 @@ async def get_dashboard(
 
 
 # --------------------------------------------------------------------------- #
+# Invite-only guest list (SPEC-adjacent; interview_config.invite_only)
+# --------------------------------------------------------------------------- #
+class InviteIn(BaseModel):
+    email: str
+    first_name: str = ""
+    last_name: str = ""
+
+
+class InvitesAddIn(BaseModel):
+    invites: list[InviteIn] = Field(min_length=1, max_length=invites_domain.MAX_ROWS)
+
+
+class InviteOut(BaseModel):
+    id: UUID
+    email: str
+    first_name: str
+    last_name: str
+    # candidate_invite delivery: queued | sent | failed
+    email_status: str
+    last_emailed_at: datetime | None = None
+    created_at: datetime
+    # Pipeline progress derived from applications by candidate email.
+    status: Literal["invited", "claimed", "completed"] = "invited"
+
+
+class InvitesMutationOut(BaseModel):
+    added: int
+    duplicates: int
+    invalid: list[dict] = []
+
+
+async def _enqueue_queued_invite_emails(db: AsyncSession, req_id: UUID) -> None:
+    ids = (
+        (
+            await db.execute(
+                select(RequisitionInvite.id).where(
+                    RequisitionInvite.requisition_id == req_id,
+                    RequisitionInvite.email_status == "queued",
+                    RequisitionInvite.revoked_at.is_(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for invite_id in ids:
+        await enqueue("send_invite_email", str(invite_id))
+
+
+async def _add_invites(
+    db: AsyncSession, req: Requisition, user: AuthUser, rows: list[dict]
+) -> tuple[list[UUID], int]:
+    """Upsert guest-list rows (emails pre-normalized); returns (ids to email,
+    duplicates). Re-adding a revoked email reactivates it with a fresh send."""
+    if not rows:
+        return [], 0
+    existing = {
+        i.email: i
+        for i in (
+            await db.execute(
+                select(RequisitionInvite).where(
+                    RequisitionInvite.requisition_id == req.id,
+                    RequisitionInvite.email.in_([r["email"] for r in rows]),
+                )
+            )
+        ).scalars()
+    }
+    new_ids: list[UUID] = []
+    duplicates = 0
+    for row in rows:
+        current = existing.get(row["email"])
+        if current is not None and current.revoked_at is None:
+            duplicates += 1
+            continue
+        if current is not None:
+            current.revoked_at = None
+            current.first_name = row["first_name"] or current.first_name
+            current.last_name = row["last_name"] or current.last_name
+            current.email_status = "queued"
+            current.invited_by = user.user_id
+            new_ids.append(current.id)
+            continue
+        invite = RequisitionInvite(
+            id=new_id(),
+            requisition_id=req.id,
+            email=row["email"],
+            first_name=row["first_name"],
+            last_name=row["last_name"],
+            invited_by=user.user_id,
+        )
+        db.add(invite)
+        new_ids.append(invite.id)
+    return new_ids, duplicates
+
+
+@router.get("/requisitions/{req_id}/invites", response_model=list[InviteOut])
+async def list_invites(
+    req_id: UUID, user: AuthUser = _admin, db: AsyncSession = Depends(get_db)
+) -> list[InviteOut]:
+    req = await _get_live_requisition(db, req_id, await _org_id_for(db, user))
+    invites = (
+        (
+            await db.execute(
+                select(RequisitionInvite)
+                .where(
+                    RequisitionInvite.requisition_id == req.id,
+                    RequisitionInvite.revoked_at.is_(None),
+                )
+                .order_by(RequisitionInvite.created_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    app_rows = (
+        await db.execute(
+            select(func.lower(User.email), Application.state)
+            .join(User, Application.candidate_id == User.id)
+            .where(Application.requisition_id == req.id)
+        )
+    ).all()
+    progress: dict[str, str] = {}
+    for email, state in app_rows:
+        if state in _COMPLETED_STATES or state == "completed":
+            progress[email] = "completed"
+        else:
+            progress.setdefault(email, "claimed")
+    return [
+        InviteOut(
+            id=i.id,
+            email=i.email,
+            first_name=i.first_name,
+            last_name=i.last_name,
+            email_status=i.email_status,
+            last_emailed_at=i.last_emailed_at,
+            created_at=i.created_at,
+            status=progress.get(i.email, "invited"),  # type: ignore[arg-type]
+        )
+        for i in invites
+    ]
+
+
+@router.post("/requisitions/{req_id}/invites", response_model=InvitesMutationOut)
+async def add_invites(
+    req_id: UUID,
+    body: InvitesAddIn,
+    user: AuthUser = _admin,
+    db: AsyncSession = Depends(get_db),
+) -> InvitesMutationOut:
+    req = await _get_live_requisition(db, req_id, await _org_id_for(db, user))
+    rows: list[dict] = []
+    invalid: list[dict] = []
+    duplicates = 0
+    seen: set[str] = set()
+    for idx, invite in enumerate(body.invites, start=1):
+        email = invites_domain.normalize_email(invite.email)
+        if email is None:
+            invalid.append({"row": idx, "reason": "invalid email"})
+            continue
+        if email in seen:
+            duplicates += 1
+            continue
+        seen.add(email)
+        rows.append(
+            {
+                "email": email,
+                "first_name": invite.first_name.strip(),
+                "last_name": invite.last_name.strip(),
+            }
+        )
+    new_ids, dupes = await _add_invites(db, req, user, rows)
+    await record_audit(
+        db,
+        actor_id=user.user_id,
+        action="invite.create",
+        entity_type="requisition",
+        entity_id=req.id,
+        meta={"added": len(new_ids)},
+    )
+    # Commit before enqueueing: the worker must be able to load the rows.
+    # Drafts stay 'queued' — deploy (update_requisition) releases them.
+    await db.commit()
+    if req.status == "open":
+        for invite_id in new_ids:
+            await enqueue("send_invite_email", str(invite_id))
+    return InvitesMutationOut(added=len(new_ids), duplicates=duplicates + dupes, invalid=invalid)
+
+
+@router.post(
+    "/requisitions/{req_id}/invites/import",
+    response_model=InvitesMutationOut,
+    dependencies=[rate_limit("invite_import", 12)],
+)
+async def import_invites(
+    req_id: UUID,
+    file: UploadFile = File(...),
+    user: AuthUser = _admin,
+    db: AsyncSession = Depends(get_db),
+) -> InvitesMutationOut:
+    """Bulk upload: .csv or .xlsx with email / first name / last name columns
+    (header row optional — without one, exactly that order)."""
+    req = await _get_live_requisition(db, req_id, await _org_id_for(db, user))
+    data = await file.read(invites_domain.MAX_FILE_BYTES + 1)
+    try:
+        parsed = invites_domain.parse_invite_file(file.filename or "", data)
+    except ValueError as exc:
+        raise AppError("validation_error", str(exc)) from exc
+    new_ids, dupes = await _add_invites(db, req, user, parsed.rows)
+    await record_audit(
+        db,
+        actor_id=user.user_id,
+        action="invite.import",
+        entity_type="requisition",
+        entity_id=req.id,
+        meta={"added": len(new_ids), "invalid": len(parsed.invalid)},
+    )
+    await db.commit()
+    if req.status == "open":
+        for invite_id in new_ids:
+            await enqueue("send_invite_email", str(invite_id))
+    return InvitesMutationOut(
+        added=len(new_ids), duplicates=parsed.duplicates + dupes, invalid=parsed.invalid
+    )
+
+
+async def _get_org_invite(db: AsyncSession, req: Requisition, invite_id: UUID) -> RequisitionInvite:
+    invite = await db.get(RequisitionInvite, invite_id)
+    if invite is None or invite.requisition_id != req.id or invite.revoked_at is not None:
+        raise AppError("not_found", "Invite not found")
+    return invite
+
+
+@router.delete("/requisitions/{req_id}/invites/{invite_id}")
+async def revoke_invite(
+    req_id: UUID,
+    invite_id: UUID,
+    user: AuthUser = _admin,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Uninvite: blocks future claims only — an application already claimed
+    (and any interview) lives on."""
+    req = await _get_live_requisition(db, req_id, await _org_id_for(db, user))
+    invite = await _get_org_invite(db, req, invite_id)
+    invite.revoked_at = datetime.now(UTC)
+    await record_audit(
+        db,
+        actor_id=user.user_id,
+        action="invite.revoke",
+        entity_type="requisition",
+        entity_id=req.id,
+        meta={"email": invite.email},
+    )
+    return {"ok": True}
+
+
+@router.post(
+    "/requisitions/{req_id}/invites/{invite_id}/resend",
+    dependencies=[rate_limit("invite_resend", 30)],
+)
+async def resend_invite(
+    req_id: UUID,
+    invite_id: UUID,
+    user: AuthUser = _admin,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    req = await _get_live_requisition(db, req_id, await _org_id_for(db, user))
+    invite = await _get_org_invite(db, req, invite_id)
+    invite.email_status = "queued"
+    await record_audit(
+        db,
+        actor_id=user.user_id,
+        action="invite.resend",
+        entity_type="requisition",
+        entity_id=req.id,
+        meta={"email": invite.email},
+    )
+    await db.commit()
+    if req.status == "open":
+        await enqueue("send_invite_email", str(invite.id))
+    return {"ok": True, "email_status": invite.email_status}
+
+
+# --------------------------------------------------------------------------- #
 # Email smoke test (operator-only)
 # --------------------------------------------------------------------------- #
 # Sample contexts so prod deliverability (DNS/DKIM, rendering across clients)
@@ -1464,6 +1763,7 @@ _TEST_EMAIL_CONTEXTS: dict[str, dict] = {
         "org_name": "Acme Talent",
         "interview_name": "Backend Engineer Screen",
         "interview_url": "{base}/i/smoke-test-token",
+        "candidate_name": "Jordan",
         "valid_until": "July 31, 2026",
         "brand_name": "Acme Talent",
         "brand_url": "https://example.com",

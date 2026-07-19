@@ -25,6 +25,7 @@ CAND_CTX = {
     "org_name": "Acme Talent",
     "interview_name": "Backend Engineer Screen",
     "interview_url": "https://kandidly.example.com/i/tok123",
+    "candidate_name": "Jordan",
     "valid_until": "July 31, 2026",
 }
 COMPLETED_CTX = {
@@ -84,6 +85,17 @@ def test_subjects():
         email_core.render_email("interview_completed", COMPLETED_CTX).subject
         == "Interview complete — Backend Engineer Screen"
     )
+
+
+def test_candidate_invite_optional_lines_drop_cleanly():
+    """candidate_name and valid_until are optional: without them the greeting
+    and validity lines vanish instead of rendering 'Hi ,' / 'valid until .'"""
+    ctx = {k: v for k, v in CAND_CTX.items() if k not in ("candidate_name", "valid_until")}
+    rendered = email_core.render_email("candidate_invite", ctx)
+    for part in (rendered.html, rendered.text):
+        assert "Hi " not in part
+        assert "valid until" not in part
+    assert CAND_CTX["interview_url"] in rendered.html
 
 
 def test_completed_email_says_someone_will_reach_out():

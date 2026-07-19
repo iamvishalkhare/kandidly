@@ -145,10 +145,13 @@ export default function CandidateLanding() {
     onError: err => {
       const data = (err as { response?: { data?: { code?: string; detail?: { reason?: string } } } })
         ?.response?.data;
-      // An email-mismatched candidate stays signed in — the error panel offers
-      // an account switch. A non-candidate session (recruiter/admin) can never
+      // A candidate with the wrong email (personal-link mismatch, or not on an
+      // invite-only guest list) stays signed in — the error panel offers an
+      // account switch. A non-candidate session (recruiter/admin) can never
       // claim: drop it so they can sign in with a candidate account.
-      if (data?.code === 'forbidden' && data?.detail?.reason !== 'email_mismatch') {
+      const wrongEmail =
+        data?.detail?.reason === 'email_mismatch' || data?.detail?.reason === 'not_invited';
+      if (data?.code === 'forbidden' && !wrongEmail) {
         clearAuth();
         if (IS_DEV_BUILD) setShowPicker(true);
       }
@@ -192,6 +195,9 @@ export default function CandidateLanding() {
     if (data?.code === 'forbidden' && data.detail?.reason === 'email_mismatch') {
       return 'This invite was sent to a different email address. Switch to the account that received the invitation to continue.';
     }
+    if (data?.code === 'forbidden' && data.detail?.reason === 'not_invited') {
+      return 'This interview is invite-only, and your email address isn’t on the invite list. Sign in with the email that received the invitation, or contact the recruiter.';
+    }
     if (data?.code === 'forbidden') {
       return IS_DEV_BUILD
         ? 'That account can’t apply — choose a candidate account below to continue.'
@@ -205,7 +211,10 @@ export default function CandidateLanding() {
       | { response?: { data?: { code?: string; detail?: { reason?: string } } } }
       | undefined;
     const data = err?.response?.data;
-    return data?.code === 'forbidden' && data.detail?.reason === 'email_mismatch';
+    return (
+      data?.code === 'forbidden' &&
+      (data.detail?.reason === 'email_mismatch' || data.detail?.reason === 'not_invited')
+    );
   })();
 
   const switchAccount = async () => {
@@ -297,6 +306,15 @@ export default function CandidateLanding() {
           {link.interview_type && (
             <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
               {link.interview_type} interview
+            </p>
+          )}
+          {link.invite_only && (
+            <p
+              className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full mt-1"
+              style={{ background: 'var(--accent-muted)', color: 'var(--accent)' }}
+            >
+              <Lock size={11} />
+              Invite-only — sign in with the email that received this invitation
             </p>
           )}
         </div>

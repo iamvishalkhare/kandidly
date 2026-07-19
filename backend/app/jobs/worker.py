@@ -7,7 +7,7 @@ from arq.connections import RedisSettings
 
 from app.core.config import settings
 from app.jobs.annotate import annotate_turn
-from app.jobs.email import send_email
+from app.jobs.email import send_email, send_invite_email
 from app.jobs.enrichment import enrich_sources
 from app.jobs.interviews import (
     aggregate_scores,
@@ -50,6 +50,7 @@ class WorkerSettings:
         analyze_snapshots,
         review_integrity,
         send_email,
+        send_invite_email,
     ]
 
     cron_jobs = [

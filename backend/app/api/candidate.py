@@ -29,6 +29,7 @@ from app.db.models import (
     Interview,
     InviteLink,
     Requisition,
+    RequisitionInvite,
     StoredFile,
     User,
 )
@@ -86,9 +87,35 @@ async def claim(
     await ensure_interview_capacity(db, requisition.org_id)
 
     # Idempotent re-entry: return the existing live application if any.
+    # Deliberately checked BEFORE the invite-only gate so a later uninvite
+    # never kicks a candidate who is already mid-flight.
     existing = await apps.find_live_application(db, requisition.id, user.user_id)
     if existing is not None:
         return ClaimOut(application_id=existing.id, state=existing.state)
+
+    # Invite-only requisitions: the open link is a guest-list door, not a
+    # bypass — the authed email must be on requisition_invites. Personal
+    # links already carry their own (stricter) email match above.
+    from app.schemas.interview_config import InterviewConfig
+
+    if InterviewConfig(**(requisition.interview_config or {})).invite_only and link.kind == "open":
+        invited = (
+            await db.execute(
+                select(RequisitionInvite.id).where(
+                    RequisitionInvite.requisition_id == requisition.id,
+                    RequisitionInvite.email == user.email.strip().lower(),
+                    RequisitionInvite.revoked_at.is_(None),
+                )
+            )
+        ).first()
+        if invited is None:
+            # detail.reason lets the SPA show "sign in with the invited
+            # email" + account switch, distinct from other 403s.
+            raise AppError(
+                "forbidden",
+                "This interview is invite-only",
+                detail={"reason": "not_invited"},
+            )
 
     app = await apps.create_application(
         db,

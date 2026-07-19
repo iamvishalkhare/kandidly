@@ -26,6 +26,10 @@ class InterviewConfig(BaseModel):
     wrap_trigger_seconds: int = 180
     rejoin_grace_seconds: int = 600
     proctoring: ProctoringConfig = Field(default_factory=ProctoringConfig)
+    # Access policy: when True, only emails on the requisition's guest list
+    # (requisition_invites) may claim through the open link. Same URL either
+    # way — enforcement happens at claim time against the authed email.
+    invite_only: bool = False
     observer_allowed: bool = True
     difficulty_band: Literal["auto"] | int = DIFFICULTY_AUTO  # type: ignore
     tone: Literal["conversational", "friendly", "technical", "structured", "bar_raiser"] = (

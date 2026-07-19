@@ -11,6 +11,8 @@ export interface Requisition {
   completed: number;
   live: boolean;
   status: string;
+  /** Guest-listed access — only invited emails can claim the interview URL. */
+  inviteOnly?: boolean;
 }
 
 export const MOCK_REQUISITIONS: Requisition[] = [

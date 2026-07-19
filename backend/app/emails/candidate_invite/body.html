@@ -1,10 +1,15 @@
 {% extends "base.html" %}
 {% block content %}
+      {% if candidate_name | default("") %}
+      <p style="margin:0 0 16px;">Hi {{ candidate_name }},</p>
+      {% endif %}
       <p style="margin:0 0 16px;"><strong>{{ org_name }}</strong> has invited you to complete an interview: <strong>{{ interview_name }}</strong>.</p>
       <p style="margin:0 0 24px;">The interview is a voice conversation with an AI interviewer. It takes place in your browser — no installs. Find a quiet spot, and start whenever you're ready.</p>
       <p style="margin:0 0 24px;">
         <a href="{{ interview_url }}" style="display:inline-block;background-color:#18181b;color:#ffffff;text-decoration:none;padding:10px 20px;border-radius:6px;font-weight:600;">Start your interview</a>
       </p>
       <p style="margin:0 0 8px;font-size:13px;color:#71717a;">Or paste this link into your browser:<br>{{ interview_url }}</p>
+      {% if valid_until | default("") %}
       <p style="margin:0;font-size:13px;color:#71717a;">This invitation is valid until {{ valid_until }}.</p>
+      {% endif %}
 {% endblock %}
