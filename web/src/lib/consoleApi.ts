@@ -128,6 +128,43 @@ export interface InviteIn {
   last_name: string;
 }
 
+/* ── org-wide invitations ledger (/console/invitations) ───────────────────── */
+
+export interface InvitationRowWire {
+  id: string;
+  requisition_id: string;
+  requisition_code: string;
+  requisition_title: string;
+  email: string;
+  first_name: string;
+  last_name: string;
+  email_status: 'queued' | 'sent' | 'failed';
+  /** Derived pipeline progress — the UI labels these Invited / Attempting / Done. */
+  status: 'invited' | 'claimed' | 'completed';
+  created_at: string;
+  revoked_at: string | null;
+}
+
+export interface InvitationsPageWire {
+  items: InvitationRowWire[];
+  /** Rows matching the filters, across all pages. */
+  total: number;
+  offset: number;
+  limit: number;
+}
+
+export interface InvitationsQuery {
+  q?: string;
+  requisitionCode?: string;
+  status?: 'invited' | 'claimed' | 'completed' | '';
+  access?: 'active' | 'revoked';
+  /** ISO datetimes (UTC) bounding created_at. */
+  createdAfter?: string;
+  createdBefore?: string;
+  offset?: number;
+  limit?: number;
+}
+
 export interface CatalogWire {
   domains: string[];
   skills: string[];
@@ -483,6 +520,18 @@ export const consoleApi = {
   revokeInvite: async (reqId: string, inviteId: string): Promise<void> => {
     await api.delete(`/api/admin/console/requisitions/${reqId}/invites/${inviteId}`);
   },
+  getInvitations: async (params: InvitationsQuery): Promise<InvitationsPageWire> => {
+    const qs = new URLSearchParams();
+    if (params.q) qs.set('q', params.q);
+    if (params.requisitionCode) qs.set('requisition_code', params.requisitionCode);
+    if (params.status) qs.set('status', params.status);
+    if (params.access) qs.set('access', params.access);
+    if (params.createdAfter) qs.set('created_after', params.createdAfter);
+    if (params.createdBefore) qs.set('created_before', params.createdBefore);
+    qs.set('offset', String(params.offset ?? 0));
+    qs.set('limit', String(params.limit ?? 20));
+    return (await api.get<InvitationsPageWire>(`/api/admin/console/invitations?${qs}`)).data;
+  },
   resendInvite: async (reqId: string, inviteId: string): Promise<void> => {
     await api.post(`/api/admin/console/requisitions/${reqId}/invites/${inviteId}/resend`);
   },
@@ -637,6 +686,32 @@ export function useInviteMutations(reqId: string | undefined) {
     onSettled: invalidate,
   });
   return { add, importFile, revoke, resend };
+}
+
+/** Org-wide invitations ledger page. keepPreviousData keeps the table stable
+ * while a filter/page change is in flight. */
+export function useConsoleInvitations(params: InvitationsQuery) {
+  return useQuery({
+    queryKey: ['console', 'invitations', params],
+    queryFn: () => consoleApi.getInvitations(params),
+    placeholderData: keepPreviousData,
+  });
+}
+
+/** Revoke from the invitations ledger (the per-requisition guest panel has its
+ * own mutation set in useInviteMutations). */
+export function useRevokeInvitation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ reqId, inviteId }: { reqId: string; inviteId: string }) =>
+      consoleApi.revokeInvite(reqId, inviteId),
+    onSettled: (_data, _error, { reqId }) => {
+      queryClient.invalidateQueries({ queryKey: ['console', 'invitations'] });
+      queryClient.invalidateQueries({
+        queryKey: ['console', 'requisitions', reqId, 'invites'],
+      });
+    },
+  });
 }
 
 export function useDeleteInterview() {

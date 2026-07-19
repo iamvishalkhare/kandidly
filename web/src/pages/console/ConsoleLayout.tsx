@@ -9,6 +9,7 @@ import {
   LayoutDashboard,
   Briefcase,
   MessageSquare,
+  Send,
   // BookOpen,   // re-enable with the Rubrics nav item
   // BarChart3,  // re-enable with the Analytics nav item
   ChevronRight,
@@ -23,6 +24,7 @@ const NAV_ITEMS = [
   { label: 'Dashboard',    icon: LayoutDashboard, href: '/console',              exact: true },
   { label: 'Requisitions', icon: Briefcase,       href: '/console/requisitions', exact: false },
   { label: 'Interviews',   icon: MessageSquare,   href: '/console/interviews',   exact: false },
+  { label: 'Invitations',  icon: Send,            href: '/console/invitations',  exact: false },
   // Hidden until these sections have real content — uncomment to restore
   // (also restore the BookOpen / BarChart3 imports above).
   // { label: 'Rubrics',      icon: BookOpen,        href: '/console/rubrics',      exact: false },

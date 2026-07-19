@@ -15,8 +15,8 @@ from uuid import UUID
 import structlog
 from fastapi import APIRouter, Depends, File, UploadFile
 from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy import delete as sa_delete
-from sqlalchemy import func, or_, select
 from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1778,6 +1778,142 @@ async def resend_invite(
     if req.status == "open":
         await enqueue("send_invite_email", str(invite.id))
     return {"ok": True, "email_status": invite.email_status}
+
+
+# --------------------------------------------------------------------------- #
+# Org-wide invitations ledger (/console/invitations)
+# --------------------------------------------------------------------------- #
+class InvitationRowOut(BaseModel):
+    id: UUID
+    requisition_id: UUID
+    requisition_code: str
+    requisition_title: str
+    email: str
+    first_name: str
+    last_name: str
+    # candidate_invite delivery: queued | sent | failed
+    email_status: str
+    # Pipeline progress derived from applications by candidate email
+    # (the UI labels these Invited / Attempting / Done).
+    status: Literal["invited", "claimed", "completed"]
+    created_at: datetime
+    revoked_at: datetime | None = None
+
+
+class InvitationsPageOut(BaseModel):
+    items: list[InvitationRowOut]
+    total: int  # rows matching the filters, across all pages
+    offset: int
+    limit: int
+
+
+_INVITE_STAGES = {"invited": 0, "claimed": 1, "completed": 2}
+_INVITE_STATUS_BY_STAGE = {v: k for k, v in _INVITE_STAGES.items()}
+
+
+def _as_utc(dt: datetime) -> datetime:
+    """created_at is timezone-aware; naive query bounds are taken as UTC."""
+    return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt
+
+
+@router.get("/invitations", response_model=InvitationsPageOut)
+async def list_invitations(
+    q: str = "",
+    requisition_code: str = "",
+    status: Literal["invited", "claimed", "completed"] | None = None,
+    access: Literal["active", "revoked"] = "active",
+    created_after: datetime | None = None,
+    created_before: datetime | None = None,
+    offset: int = 0,
+    limit: int = 20,
+    user: AuthUser = _admin,
+    db: AsyncSession = Depends(get_db),
+) -> InvitationsPageOut:
+    """Every guest-list row across the org's live requisitions, newest first,
+    with server-side filters + pagination (guest lists can run to thousands of
+    rows, so this never ships the whole table). `status` is derived the same
+    way as the per-requisition search: an application by the invited email
+    marks it claimed, a completed/scored one marks it completed."""
+    org_id = await _org_id_for(db, user)
+
+    # (requisition, email) → furthest application stage, joined per invite row
+    # so derived status is filterable in SQL rather than per page in Python.
+    progress = (
+        select(
+            Application.requisition_id.label("req_id"),
+            func.lower(User.email).label("email"),
+            func.max(
+                case((Application.state.in_([*_COMPLETED_STATES, "completed"]), 2), else_=1)
+            ).label("stage"),
+        )
+        .join(User, User.id == Application.candidate_id)
+        .group_by(Application.requisition_id, func.lower(User.email))
+        .subquery()
+    )
+    stage = func.coalesce(progress.c.stage, 0)
+
+    where = [
+        Requisition.org_id == org_id,
+        Requisition.deleted_at.is_(None),
+        RequisitionInvite.revoked_at.is_(None)
+        if access == "active"
+        else RequisitionInvite.revoked_at.is_not(None),
+    ]
+    query = q.strip()
+    if query:
+        pattern = f"%{query}%"
+        full_name = RequisitionInvite.first_name + " " + RequisitionInvite.last_name
+        where.append(or_(RequisitionInvite.email.ilike(pattern), full_name.ilike(pattern)))
+    if requisition_code.strip():
+        where.append(Requisition.code.ilike(f"%{requisition_code.strip()}%"))
+    if created_after is not None:
+        where.append(RequisitionInvite.created_at >= _as_utc(created_after))
+    if created_before is not None:
+        where.append(RequisitionInvite.created_at <= _as_utc(created_before))
+    if status is not None:
+        where.append(stage == _INVITE_STAGES[status])
+
+    base = (
+        select(RequisitionInvite, Requisition.code, Requisition.title, stage.label("stage"))
+        .join(Requisition, Requisition.id == RequisitionInvite.requisition_id)
+        .outerjoin(
+            progress,
+            and_(
+                progress.c.req_id == RequisitionInvite.requisition_id,
+                progress.c.email == RequisitionInvite.email,
+            ),
+        )
+        .where(*where)
+    )
+    total = (await db.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
+    rows = (
+        await db.execute(
+            base.order_by(RequisitionInvite.created_at.desc(), RequisitionInvite.id)
+            .offset(max(0, offset))
+            .limit(max(1, min(limit, 100)))
+        )
+    ).all()
+    return InvitationsPageOut(
+        items=[
+            InvitationRowOut(
+                id=invite.id,
+                requisition_id=invite.requisition_id,
+                requisition_code=req_code,
+                requisition_title=req_title,
+                email=invite.email,
+                first_name=invite.first_name,
+                last_name=invite.last_name,
+                email_status=invite.email_status,
+                status=_INVITE_STATUS_BY_STAGE[row_stage],  # type: ignore[arg-type]
+                created_at=invite.created_at,
+                revoked_at=invite.revoked_at,
+            )
+            for invite, req_code, req_title, row_stage in rows
+        ],
+        total=total,
+        offset=max(0, offset),
+        limit=max(1, min(limit, 100)),
+    )
 
 
 # --------------------------------------------------------------------------- #

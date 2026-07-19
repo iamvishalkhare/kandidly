@@ -19,6 +19,7 @@ import CandidateDone     from './pages/candidate/Done';
 const CandidateInterview = lazy(() => import('./pages/candidate/Interview'));
 import ConsoleDashboard  from './pages/console/Dashboard';
 import ConsoleInterviews from './pages/console/Interviews';
+import ConsoleInvitations from './pages/console/Invitations';
 import InterviewReview from './pages/console/InterviewReview';
 import ConsoleRequisitions from './pages/console/Requisitions';
 import RequisitionBuilder from './pages/console/RequisitionBuilder';
@@ -187,6 +188,7 @@ function AppInner() {
       <Route path="/console" element={<ConsoleDashboard />} />
       <Route path="/console/interviews" element={<ConsoleInterviews />} />
       <Route path="/console/interviews/:interviewId" element={<InterviewReview />} />
+      <Route path="/console/invitations" element={<ConsoleInvitations />} />
       <Route path="/console/requisitions" element={<ConsoleRequisitions />} />
       <Route path="/console/requisitions/new" element={<RequisitionBuilder />} />
       <Route path="/console/requisitions/:requisitionId" element={<RequisitionBuilder />} />
