@@ -349,6 +349,16 @@ def _candidate_name(user_row: User | None) -> str:
     return user_row.display_name or user_row.email.split("@")[0]
 
 
+# Friendly review-trail detail for interviews.end_reason.
+_END_REASON_LABELS = {
+    "completed": "Completed",
+    "time_cap": "Time cap reached",
+    "abandoned": "Abandoned",
+    "error": "Ended due to error",
+    "admin_terminated": "Terminated by admin",
+}
+
+
 def _answer_present(value) -> bool:
     if value is None:
         return False
@@ -1183,8 +1193,64 @@ async def get_console_review(
         summary=review.get("summary"),
     )
 
-    # Review trail from the audit log (report actions), plus scoring milestone.
+    # Review trail: invitation → interview start/end → evaluation milestone,
+    # plus audit-log report actions. Rendered newest-first in the console.
     trail: list[ReviewTrailOut] = []
+    # Invitation time: guest-list entry for this candidate's email, falling
+    # back to a personal invite link. Open-link walk-ins have no invitation.
+    invited = False
+    if candidate is not None:
+        invite_row = (
+            await db.execute(
+                select(RequisitionInvite, User)
+                .outerjoin(User, User.id == RequisitionInvite.invited_by)
+                .where(
+                    RequisitionInvite.requisition_id == interview.requisition_id,
+                    RequisitionInvite.email == candidate.email.strip().lower(),
+                )
+            )
+        ).first()
+        if invite_row is not None:
+            invite, inviter = invite_row
+            invited = True
+            trail.append(
+                ReviewTrailOut(
+                    at=invite.last_emailed_at or invite.created_at,
+                    actor=_candidate_name(inviter) if inviter else "system",
+                    action="candidate.invited",
+                    detail=invite.email,
+                )
+            )
+    if not invited and app is not None and app.invite_link_id is not None:
+        link = await db.get(InviteLink, app.invite_link_id)
+        if link is not None and link.kind == "personal":
+            creator = await db.get(User, link.created_by)
+            trail.append(
+                ReviewTrailOut(
+                    at=link.created_at,
+                    actor=_candidate_name(creator) if creator else "system",
+                    action="candidate.invited",
+                    detail=link.email,
+                )
+            )
+    if interview.started_at is not None:
+        trail.append(
+            ReviewTrailOut(
+                at=interview.started_at,
+                actor=_candidate_name(candidate),
+                action="interview.started",
+                detail=None,
+            )
+        )
+    if interview.ended_at is not None:
+        trail.append(
+            ReviewTrailOut(
+                at=interview.ended_at,
+                actor=_candidate_name(candidate),
+                action="interview.ended",
+                detail=_END_REASON_LABELS.get(interview.end_reason or "", interview.end_reason),
+            )
+        )
     if report is not None:
         trail.append(
             ReviewTrailOut(

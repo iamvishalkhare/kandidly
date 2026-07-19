@@ -374,3 +374,16 @@ async def test_completed_application_shows_in_invite_status(
     found = await _search(client, admin_headers, req["id"], candidate.email)
     assert found["items"][0]["email"] == candidate.email.lower()
     assert found["items"][0]["status"] == "completed"
+
+    # Guest-list invite surfaces as the first (oldest) review-trail entry.
+    review = await client.get(
+        f"/api/admin/console/interviews/{interview_id}", headers=admin_headers
+    )
+    assert review.status_code == 200, review.text
+    trail = review.json()["review_trail"]
+    assert [t["action"] for t in trail] == [
+        "interview.ended",
+        "interview.started",
+        "candidate.invited",
+    ]
+    assert trail[-1]["detail"] == candidate.email.lower()

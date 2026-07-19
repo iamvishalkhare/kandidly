@@ -80,6 +80,15 @@ const DECISION_BUTTON_CLASS: Record<ReviewDecision, { idle: string; active: stri
   },
 };
 
+// Friendly labels for review-trail action keys; unknown keys render raw.
+const TRAIL_ACTION_LABELS: Record<string, string> = {
+  'candidate.invited': 'Invitation sent',
+  'interview.started': 'Interview started',
+  'interview.ended': 'Interview ended',
+  'report.generated': 'Evaluation done',
+  'report.review': 'Review recorded',
+};
+
 function formatTimeline(seconds: number) {
   const safeSeconds = Math.max(0, Math.floor(seconds));
   const minutes = Math.floor(safeSeconds / 60);
@@ -1267,7 +1276,8 @@ export default function InterviewReview() {
                   interview.reviewTrail.map((entry, i) => (
                     <div key={`${entry.action}-${i}`} className="flex items-start justify-between gap-3">
                       <p>
-                        <span className="text-on-surface">{entry.actor}</span> · {entry.action}
+                        <span className="text-on-surface">{entry.actor}</span> ·{' '}
+                        {TRAIL_ACTION_LABELS[entry.action] ?? entry.action}
                         {entry.detail ? ` — ${entry.detail}` : ''}
                       </p>
                       <span className="label-mono shrink-0">

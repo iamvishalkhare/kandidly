@@ -148,6 +148,14 @@ async def test_full_lifecycle_to_completed(
     assert r.status_code == 409
     assert r.json()["code"] == "invalid_transition"
 
+    # Review trail carries the start/end milestones (newest first). Open-link
+    # claim → no invitation entry; scoring is mocked → no report entry.
+    r = await client.get(f"/api/admin/console/interviews/{interview_id}", headers=admin_headers)
+    assert r.status_code == 200, r.text
+    trail = r.json()["review_trail"]
+    assert [t["action"] for t in trail] == ["interview.ended", "interview.started"]
+    assert trail[0]["detail"] == "Completed"
+
 
 async def test_illegal_status_jump_rejected(
     client, admin_headers, candidate_headers, service_headers, high_requisition_cap, jobs
