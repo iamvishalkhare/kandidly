@@ -44,10 +44,12 @@ class _StubWorkOS:
     def __init__(self):
         self.codes: dict[str, object] = {}
         self.logout_urls: list[dict] = []  # records of get_logout_url() calls
+        self.revoked: list[str] = []  # session ids passed to revoke_session()
         self.user_management = SimpleNamespace(
             get_authorization_url=self._authorize_url,
             authenticate_with_code=self._authenticate,
             get_logout_url=self._logout_url,
+            revoke_session=self._revoke_session,
         )
 
     def _authorize_url(self, *, provider, redirect_uri, state):
@@ -71,6 +73,9 @@ class _StubWorkOS:
         self.logout_urls.append({"session_id": session_id, "return_to": return_to})
         rt = quote(return_to or "")
         return f"https://auth.workos.test/sessions/logout?session_id={session_id}&return_to={rt}"
+
+    def _revoke_session(self, *, session_id):
+        self.revoked.append(session_id)
 
 
 @pytest.fixture
@@ -117,15 +122,12 @@ def _fragment(location: str) -> dict[str, str]:
 
 
 def _rejection_error(location: str) -> str | None:
-    """Error code from a rejected callback redirect. Rejections of an
-    authenticated account bounce through the AuthKit logout URL (the hosted
-    session must die, or the SSO cookie re-authenticates the same rejected
-    account forever) with the SPA error URL in return_to; pre-auth failures
-    carry `#error=` directly."""
-    url = urlsplit(location)
-    if url.path.endswith("/sessions/logout"):
-        rt = urlsplit(parse_qs(url.query)["return_to"][0])
-        return parse_qs(rt.query)["error"][0]
+    """Error code from a rejected callback redirect — always `#error=` now:
+    rejections of an authenticated account revoke the WorkOS session
+    server-side (the hosted session must die, or the SSO cookie
+    re-authenticates the same rejected account forever) and land on the SPA
+    error screen directly, without the old logout-URL bounce (whose return_to
+    WorkOS drops unless pre-registered, dumping users on the landing page)."""
     return _fragment(location).get("error")
 
 
@@ -351,15 +353,39 @@ async def test_bad_status_redirects_with_error(client, workos, status):
     await _set_status(wuser.email, status)
 
     assert _rejection_error(await _login(client, workos, wuser)) == f"account_{status}"
+    # The WorkOS session died server-side — without this, AuthKit's SSO cookie
+    # silently re-authenticates the same rejected account on the next /login.
+    assert f"session_{wuser.id}" in workos.revoked
 
 
-async def test_console_intent_rejects_candidate_account(client, workos, candidate):
-    # Allowlisted so the invite-only gate (which runs first) doesn't mask the
-    # role check: an allowlisted email that belongs to a candidate account
-    # still can't open the console.
-    await _allow(candidate.email)
-    location = await _login(client, workos, _wuser(candidate.email), intent="console")
-    assert _rejection_error(location) == "not_console_account"
+async def test_console_intent_promotes_allowlisted_candidate(client, workos):
+    """An email whose only account is a candidate row (it took an interview
+    first) and that the operator then adds to the console allowlist must get a
+    working console login — promoted in place (admin + own fresh org), not
+    bounced with not_console_account (which is what stranded the first real
+    invitee, 2026-07-20)."""
+    wuser = _wuser(f"promote-{uuid.uuid4().hex[:8]}@mail.dev")
+    cand = await _me(
+        client,
+        await _token_from(await _login(client, workos, wuser, intent="candidate", return_to="/")),
+    )
+    assert cand["role"] == "candidate" and cand["org_id"] is None
+
+    await _allow(wuser.email)
+    location = await _login(client, workos, wuser, intent="console")
+    me = await _me(client, await _token_from(location))
+    assert me["id"] == cand["id"]  # promoted in place, not a duplicate account
+    assert me["role"] == "admin"
+    assert me["org_id"] is not None
+    assert uuid.UUID(me["org_id"]) != await _default_org_id()
+
+    # The promoted account drives the console like any staff account…
+    token = _fragment(location)["token"]
+    r = await client.get("/api/admin/console/me", headers=auth(token))
+    assert r.status_code == 200, r.text
+    # …and is no longer a candidate account.
+    rejected = await _login(client, workos, wuser, intent="candidate")
+    assert _rejection_error(rejected) == "not_candidate_account"
 
 
 async def test_candidate_intent_rejects_staff_account(client, workos):

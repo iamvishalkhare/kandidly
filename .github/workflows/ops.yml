@@ -28,12 +28,13 @@ on:
           - enqueue-scoring
           - dump-scoring
           - reset-scoring
+          - auth-debug
       tail:
         description: Log lines to tail
         type: string
         default: "300"
       arg:
-        description: Action argument (presign-recording / enqueue-scoring; interview UUID)
+        description: Action argument (interview UUID, or email for auth-debug)
         type: string
         default: ""
 
@@ -107,6 +108,14 @@ jobs:
             reset-scoring)
               [[ "$ARG" =~ ^[0-9a-f-]{36}$ ]] || { echo "arg must be an interview uuid"; exit 1; }
               CMD="$COMPOSE exec -T -e PYTHONPATH=/app/backend backend /app/.venv/bin/python /app/backend/scripts/reset_scoring.py $ARG"
+              ;;
+            # Prints sign-in-relevant state for an email (users row, console
+            # allowlist, requisition invites, recent audit) — diagnoses "this
+            # email can't log in" without DB access. Email lands in the
+            # (private-repo) workflow log; same trade-off as dump-scoring.
+            auth-debug)
+              [[ "$ARG" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]] || { echo "arg must be an email"; exit 1; }
+              CMD="$COMPOSE exec -T -e PYTHONPATH=/app/backend backend /app/.venv/bin/python /app/backend/scripts/auth_debug.py $ARG"
               ;;
             # Generates the token ON the box, rewrites the .env.prod line,
             # recreates the services that read it, then proves auth works by

@@ -10,16 +10,19 @@ Token handoff: redirect to `{base_url_web}/auth/callback?next=<path>#token=<jwt>
 The JWT rides in the URL *fragment* deliberately — fragments never leave the
 browser (no server logs, no Referer leakage), and the SPA reads + clears it
 immediately. Simpler than a second exchange-code hop and safe enough given the
-token already only lives in localStorage. Pre-auth failures redirect with
-`#error=<code>` (auth_failed | state_mismatch); rejections of an
-authenticated account (not_allowlisted | account_suspended | account_invited
-| not_console_account | not_candidate_account) instead bounce through
-WorkOS's logout URL — killing the AuthKit hosted session so the next sign-in
-prompts fresh — and land on `?error=<code>`. The SPA error screen reads both.
+token already only lives in localStorage. All failures land on
+`#error=<code>`: pre-auth ones (auth_failed | state_mismatch) directly, and
+rejections of an authenticated account (not_allowlisted | account_suspended |
+account_invited | not_console_account | not_candidate_account) after the
+WorkOS session is revoked server-side — see _reject for why it must NOT be
+the logout-URL browser bounce.
 
 Console sign-in is invite-only: the email must pass domain/access.py's
 allowlist check *before* JIT provisioning, so uninvited sign-ins never
-create user/org rows. Candidate sign-ins are not gated.
+create user/org rows. An allowlisted email that already exists as a
+*candidate* account is promoted to a console account on its first
+console-intent login (domain/provisioning.py). Candidate sign-ins are not
+gated.
 
 Logout denylists the presented bearer in Redis (kills our own session) *and*
 ends the WorkOS AuthKit hosted session (kills its SSO cookie) — skipping the
@@ -47,7 +50,7 @@ from app.core.workos_client import get_client
 from app.db.models import User
 from app.domain.access import console_login_allowed
 from app.domain.audit import record_audit
-from app.domain.provisioning import provision_workos_user
+from app.domain.provisioning import promote_candidate_to_console, provision_workos_user
 from app.schemas.api import MeOut
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -99,20 +102,20 @@ def _spa_error(code: str) -> RedirectResponse:
 
 def _reject(code: str, wos_sid: str | None) -> RedirectResponse:
     """Rejection of an *authenticated* sign-in (not allowlisted, suspended,
-    wrong account kind): bounce the browser through WorkOS's logout URL so the
-    AuthKit hosted session dies too, with return_to carrying the SPA error
-    screen. Skipping that leaves AuthKit's SSO cookie alive, and every
-    subsequent /login silently re-authenticates the same rejected account —
-    trapping the user on the error screen with no way to switch accounts.
-    The error rides in a query param (not a fragment) because it has to
-    survive WorkOS's redirect back to us."""
+    wrong account kind): revoke the WorkOS session server-side — so AuthKit's
+    SSO cookie can't silently re-authenticate the same rejected account on the
+    next /login — then land directly on the SPA error screen.
+
+    Deliberately NOT a browser bounce through WorkOS's logout URL: WorkOS only
+    honors a logout `return_to` that is pre-registered as a sign-out redirect
+    in its dashboard, and silently falls back to the default redirect (the
+    landing page) otherwise — which swallowed every rejection screen in prod
+    (2026-07-20). If server-side revocation ever proves not to end the hosted
+    session, the fallback fix is registering {base}/auth/callback as a
+    sign-out redirect and restoring the bounce."""
     if wos_sid:
         try:
-            url = get_client().user_management.get_logout_url(
-                session_id=wos_sid,
-                return_to=f"{settings.base_url_web}/auth/callback?error={code}",
-            )
-            return RedirectResponse(url, status_code=302)
+            get_client().user_management.revoke_session(session_id=wos_sid)
         except Exception:  # noqa: BLE001 — the error screen must still render
             pass
     return _spa_error(code)
@@ -149,6 +152,18 @@ async def callback(
         return _reject("account_suspended", wos_sid)
     if user.status == "invited":
         return _reject("account_invited", wos_sid)
+    if intent == "console" and user.role == "candidate":
+        # The allowlist gate above already passed: the operator explicitly
+        # granted this email console access, so an account that only exists
+        # because it once took an interview gets promoted instead of bounced.
+        await promote_candidate_to_console(db, user, auth_resp.user)
+        await record_audit(
+            db,
+            actor_id=user.id,
+            action="user.console_promoted",
+            entity_type="user",
+            entity_id=user.id,
+        )
     if intent == "console" and user.role not in ("admin", "recruiter"):
         return _reject("not_console_account", wos_sid)
     if intent == "candidate" and user.role != "candidate":

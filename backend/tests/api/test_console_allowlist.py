@@ -76,11 +76,10 @@ async def test_console_login_blocked_when_not_allowlisted(client, workos):
     assert _rejection_error(location) == "not_allowlisted"
     # Rejected before JIT provisioning — no user (and thus no org) was created.
     assert await _user_count(wuser.email) == 0
-    # The AuthKit hosted session was ended: without this, its SSO cookie
-    # silently re-authenticates the same rejected account on every subsequent
-    # /login, trapping the user on the error screen.
-    assert workos.logout_urls
-    assert workos.logout_urls[-1]["session_id"] == f"session_{wuser.id}"
+    # The AuthKit session was revoked server-side: without this, its SSO
+    # cookie silently re-authenticates the same rejected account on every
+    # subsequent /login, trapping the user on the error screen.
+    assert f"session_{wuser.id}" in workos.revoked
 
 
 async def test_operator_email_always_allowed(client, workos, operator_headers):

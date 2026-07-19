@@ -103,3 +103,19 @@ async def provision_workos_user(
     if wuser.profile_picture_url:
         user.avatar_url = wuser.profile_picture_url
     return ProvisionResult(user=user, created=created)
+
+
+async def promote_candidate_to_console(db: AsyncSession, user: User, wuser: WorkOSUserLike) -> None:
+    """An allowlisted email whose only account is a candidate row (it took an
+    interview before being invited to the console) becomes a console account on
+    its first console-intent login: own fresh org + admin role, exactly what a
+    fresh console signup would have received. One-way — the row stops being a
+    candidate account, so later candidate-intent logins fail with
+    not_candidate_account. Callers must have enforced the console allowlist
+    first (api/auth.py does, before provisioning)."""
+    name, slug = _org_seed(wuser)
+    org = Organization(id=new_id(), name=name, slug=slug)
+    db.add(org)
+    await db.flush()
+    user.org_id = org.id
+    user.role = "admin"

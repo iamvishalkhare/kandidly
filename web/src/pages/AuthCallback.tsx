@@ -6,10 +6,10 @@
  * address bar immediately, fetch /api/auth/me to populate the auth store, and
  * continue to `next`.
  *
- * Failure: `#error=<code>` for pre-auth failures, or `?error=<code>` when the
- * backend rejected an authenticated account — those bounce through WorkOS's
- * logout URL first (ending the AuthKit hosted session so the next sign-in
- * prompts fresh), and fragments don't survive that round trip.
+ * Failure: `#error=<code>` — for rejections of an authenticated account the
+ * backend revokes the WorkOS session server-side first, so the next sign-in
+ * prompts fresh. (`?error=<code>` is also read for robustness; it was the
+ * carrier back when rejections bounced through WorkOS's logout URL.)
  */
 
 import { useEffect, useRef, useState } from 'react';
