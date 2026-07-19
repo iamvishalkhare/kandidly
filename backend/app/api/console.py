@@ -1217,20 +1217,19 @@ async def get_console_review(
     )
 
 
-# Interview deletion is destructive (DB + S3 + Redis) and exercised so far
-# only by one operator testing the fix for the 2026-07-19 stuck-interview
-# incident — deliberately scoped to that one account rather than every
-# admin/recruiter until it's proven safe to open up. Hardcoded per explicit
-# product decision, not a role: every other console user gets a 403 here even
-# though they pass the `_admin` role guard.
-_INTERVIEW_DELETE_ALLOWED_EMAIL = "vishalkhare39@gmail.com"
+# Operator-only surface: interview deletion (destructive — DB + S3 + Redis,
+# scoped after the 2026-07-19 stuck-interview incident) and the email smoke
+# test (sends real mail in prod). Deliberately hardcoded to one account rather
+# than a role, per explicit product decision: every other console user gets a
+# 403 here even though they pass the `_admin` role guard.
+_OPERATOR_EMAIL = "vishalkhare39@gmail.com"
 
 
-async def _ensure_can_delete_interviews(db: AsyncSession, user: AuthUser) -> None:
+async def _ensure_operator(db: AsyncSession, user: AuthUser, what: str) -> None:
     row = await db.get(User, user.user_id)
     email = (row.email if row else user.email) or ""
-    if email.lower() != _INTERVIEW_DELETE_ALLOWED_EMAIL:
-        raise AppError("forbidden", "Interview deletion is not available for this account")
+    if email.lower() != _OPERATOR_EMAIL:
+        raise AppError("forbidden", f"{what} is not available for this account")
 
 
 @router.delete("/interviews/{interview_id}")
@@ -1243,7 +1242,7 @@ async def delete_console_interview(
     drops its interview_id and reverts to 'abandoned' (same direct-set
     shortcut past transition() that sweep_abandoned / dev_reset use), which
     clears it from the uq_app_live index so the next claim starts fresh."""
-    await _ensure_can_delete_interviews(db, user)
+    await _ensure_operator(db, user, "Interview deletion")
     interview = await _get_org_interview(db, interview_id, user)
 
     snapshot_file_ids = (
@@ -1445,3 +1444,73 @@ async def get_dashboard(
         weekly_dropped=[WeeklyPointOut(week_start=k, count=v) for k, v in dropped_buckets.items()],
         recent_interviews=await _ledger_rows(db, org_id, limit=8),
     )
+
+
+# --------------------------------------------------------------------------- #
+# Email smoke test (operator-only)
+# --------------------------------------------------------------------------- #
+# Sample contexts so prod deliverability (DNS/DKIM, rendering across clients)
+# can be checked without staging real invite data. The candidate-facing
+# samples carry brand placeholders so the branded header/footer paths render
+# in the smoke test too (brand integration is an upcoming feature).
+_TEST_EMAIL_CONTEXTS: dict[str, dict] = {
+    "org_invite": {
+        "inviter_name": "Alex Rivera",
+        "org_name": "Acme Talent",
+        "accept_url": "{base}/console",
+        "expiry_note": "This invitation expires in 7 days.",
+    },
+    "candidate_invite": {
+        "org_name": "Acme Talent",
+        "interview_name": "Backend Engineer Screen",
+        "interview_url": "{base}/i/smoke-test-token",
+        "valid_until": "July 31, 2026",
+        "brand_name": "Acme Talent",
+        "brand_url": "https://example.com",
+    },
+    "interview_completed": {
+        "candidate_name": "Jordan Lee",
+        "org_name": "Acme Talent",
+        "interview_name": "Backend Engineer Screen",
+        "brand_name": "Acme Talent",
+        "brand_url": "https://example.com",
+    },
+}
+
+
+class TestEmailIn(BaseModel):
+    template: Literal["org_invite", "candidate_invite", "interview_completed"]
+    to: str = Field(min_length=3, pattern=r".+@.+")
+
+
+@router.post("/email-test")
+async def send_test_email(
+    body: TestEmailIn, user: AuthUser = _admin, db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Render a template with sample context and send it synchronously (no arq
+    hop) so the caller sees the transport result — or its error — right away."""
+    from app.core import email as email_core
+
+    await _ensure_operator(db, user, "The email smoke test")
+    context = {
+        k: v.format(base=settings.base_url_web) if isinstance(v, str) else v
+        for k, v in _TEST_EMAIL_CONTEXTS[body.template].items()
+    }
+    rendered = email_core.render_email(body.template, context)
+    try:
+        message_id = await email_core.get_transport().send(to=body.to, message=rendered)
+    except email_core.EmailSendError as exc:
+        raise AppError("internal_error", f"Email send failed: {exc}") from exc
+    await record_audit(
+        db,
+        actor_id=user.user_id,
+        action="email.test_send",
+        entity_type="email",
+        entity_id=None,
+        meta={"template": body.template, "to": body.to},
+    )
+    return {
+        "transport": type(email_core.get_transport()).__name__,
+        "message_id": message_id,
+        "subject": rendered.subject,
+    }

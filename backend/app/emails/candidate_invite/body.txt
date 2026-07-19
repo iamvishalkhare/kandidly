@@ -1,0 +1,13 @@
+{% extends "base.txt" %}
+{% block content %}
+{{ org_name }} has invited you to complete an interview: {{ interview_name }}.
+
+The interview is a voice conversation with an AI interviewer. It takes place
+in your browser — no installs. Find a quiet spot, and start whenever you're
+ready.
+
+Start your interview:
+{{ interview_url }}
+
+This invitation is valid until {{ valid_until }}.
+{% endblock %}

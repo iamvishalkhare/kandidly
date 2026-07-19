@@ -68,6 +68,15 @@ class Settings(BaseSettings):
     # their own, so revocations must outlive any realistic session)
     auth_revoked_token_ttl_s: int = 30 * 24 * 3600
 
+    # transactional email (core/email.py, jobs/email.py). Transport is
+    # "resend" | "console" | "" (auto: resend when an API key is set, else
+    # console — so dev/tests never need mail config). The default sender is
+    # Resend's shared onboarding domain, which can only deliver to the Resend
+    # account owner's own address — set a verified-domain sender in prod.
+    resend_api_key: str = ""
+    email_transport: str = ""
+    email_from: str = "Kandidly <onboarding@resend.dev>"
+
     # captcha — Google reCAPTCHA v3, guards the candidate form submit against
     # bot/DDoS abuse. Empty secret → verification is skipped (dev parity with the
     # fail-open rate limiter); set both keys in prod to enforce.

@@ -366,3 +366,52 @@ approval or branch protections later. SSM runs commands as root, so the
 workflow wraps deploy.sh in `runuser -l ec2-user` — that keeps the repo
 checkout and Docker Compose runs under ec2-user's ownership and its `docker`
 group membership (§2), rather than leaving root-owned files behind.
+
+## 11. Transactional email (Resend)
+
+Org-member and candidate invites are sent through [Resend]
+(https://resend.com). The backend picks its transport automatically: with
+`KANDIDLY_RESEND_API_KEY` empty it logs emails instead of sending (console
+transport — dev/test default), with a key set it POSTs to the Resend API from
+the arq worker (`send_email` job, exponential backoff on 429/5xx).
+
+One-time setup:
+
+1. **API key**: Resend dashboard → API Keys → create. A *sending-only*
+   (restricted) key is enough for the app; note that a restricted key cannot
+   manage domains, so do the domain step in the dashboard.
+2. **Verify the sending domain** (required before mail can come from
+   `no-reply@kandidly.DOMAIN`): dashboard → Domains → Add Domain →
+   `kandidly.vishalkhare.com`, then add the three DNS records Resend shows
+   in the zone that hosts the domain (same zone as the A records from §1)
+   and wait for the dashboard to flip the domain to **Verified** (minutes,
+   up to an hour with slow propagation). Done 2026-07-19 — the domain is
+   verified with these records (kept here for zone disaster recovery; the
+   DKIM key is per-registration, so re-adding the domain mints a new one):
+   - TXT `resend._domainkey.kandidly` → `p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDVpLPDCQla77J+OORWAhMfNpBQLGYa/M+dsi8HWsiNjNjzj5mB+CV5iY+YjYcD5NETKh2kUPKh1mdV18gjSPR6FarVvMlDiE9p21zO4I2GtHfpNnfnGHA3LdKm+TSwOCnTWIVqpvnpOm4E/xxZhKQmjbItMWmBNpldu2T9UyhlrwIDAQAB` (DKIM)
+   - MX `send.kandidly` → `feedback-smtp.us-east-1.amazonses.com` prio 10 (SPF envelope-from)
+   - TXT `send.kandidly` → `v=spf1 include:amazonses.com ~all` (SPF)
+   Optionally add the shown DMARC record — improves inbox placement.
+3. **`.env.prod`**: set `KANDIDLY_RESEND_API_KEY` and
+   `KANDIDLY_EMAIL_FROM=Kandidly <no-reply@kandidly.vishalkhare.com>`
+   (the From domain must be the verified one), then
+   `docker compose -f infra/compose.prod.yml up -d backend worker`.
+
+Smoke test (operator account only — same hardcoded email as interview
+deletion in `app/api/console.py`): send every template to yourself through
+the real transport and check they land (and render) in a real inbox:
+
+```bash
+TOKEN=<console bearer JWT>   # browser devtools → localStorage after signing in
+for t in org_invite candidate_invite interview_completed; do
+  curl -s -X POST https://api.kandidly.vishalkhare.com/api/admin/console/email-test \
+    -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+    -d "{\"template\": \"$t\", \"to\": \"you@example.com\"}"
+done
+```
+
+The response carries the transport used and the Resend message id; a
+`resend 4xx` error here usually means the From domain isn't verified yet.
+Before domain verification, Resend can only deliver from
+`onboarding@resend.dev` to the account owner's own address — useful for a
+first end-to-end check of the key.

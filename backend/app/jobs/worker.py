@@ -7,6 +7,7 @@ from arq.connections import RedisSettings
 
 from app.core.config import settings
 from app.jobs.annotate import annotate_turn
+from app.jobs.email import send_email
 from app.jobs.enrichment import enrich_sources
 from app.jobs.interviews import (
     aggregate_scores,
@@ -48,6 +49,7 @@ class WorkerSettings:
         process_recording,
         analyze_snapshots,
         review_integrity,
+        send_email,
     ]
 
     cron_jobs = [
