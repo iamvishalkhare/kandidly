@@ -26,12 +26,26 @@ docker info >/dev/null 2>&1 || fail "cannot talk to the Docker daemon (docker ru
 [[ -f "$ENV_FILE" ]] || fail "$ENV_FILE missing — copy infra/.env.prod.example and fill it in"
 [[ "$(stat -c %a "$ENV_FILE")" == "600" ]] || fail "$ENV_FILE must be chmod 600"
 
-# Sourcing (rather than compose env_file alone) makes the values available to
-# compose interpolation (VITE_API_BASE build arg) and to this script.
-set -a
-# shellcheck disable=SC1090
-source "$ENV_FILE"
-set +a
+# Exporting (rather than compose env_file alone) makes the values available to
+# compose interpolation (VITE_API_BASE build arg) and to this script. NOT
+# `source`: .env.prod follows compose env_file (dotenv) semantics, where a
+# value like `KANDIDLY_EMAIL_FROM=Kandidly <no-reply@…>` is legal — bash
+# parses that `<` as a redirect and a dotenv-legal line bricks every deploy
+# (2026-07-19). Read KEY=VALUE literally like compose does: strip one
+# surrounding quote pair, otherwise trim an unquoted trailing ` # comment`.
+while IFS= read -r line || [[ -n "$line" ]]; do
+  [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] || continue
+  key="${line%%=*}"
+  val="${line#*=}"
+  val="${val%"${val##*[![:space:]]}"}" # rtrim
+  if [[ ${#val} -ge 2 && ("$val" == \"*\" || "$val" == \'*\') ]]; then
+    val="${val:1:${#val}-2}"
+  else
+    val="${val%%[[:space:]]#*}"
+    val="${val%"${val##*[![:space:]]}"}"
+  fi
+  export "$key=$val"
+done <"$ENV_FILE"
 : "${DOMAIN:?DOMAIN not set in .env.prod}"
 : "${VITE_API_BASE:?VITE_API_BASE not set in .env.prod (baked into the web bundle)}"
 : "${POSTGRES_USER:?POSTGRES_USER not set in .env.prod}"
