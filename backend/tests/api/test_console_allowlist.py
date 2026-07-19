@@ -15,8 +15,8 @@ from sqlalchemy import func, select
 from tests.api.conftest import auth, mint_token
 from tests.api.test_workos_auth import (
     _allow,
-    _fragment,
     _login,
+    _rejection_error,
     _StubWorkOS,
     _token_from,
     _wuser,
@@ -71,11 +71,16 @@ async def operator_headers():
 # login gate
 # --------------------------------------------------------------------------- #
 async def test_console_login_blocked_when_not_allowlisted(client, workos):
-    email = f"stranger-{uuid.uuid4().hex[:8]}@mail.dev"
-    frag = _fragment(await _login(client, workos, _wuser(email)))
-    assert frag == {"error": "not_allowlisted"}
+    wuser = _wuser(f"stranger-{uuid.uuid4().hex[:8]}@mail.dev")
+    location = await _login(client, workos, wuser)
+    assert _rejection_error(location) == "not_allowlisted"
     # Rejected before JIT provisioning — no user (and thus no org) was created.
-    assert await _user_count(email) == 0
+    assert await _user_count(wuser.email) == 0
+    # The AuthKit hosted session was ended: without this, its SSO cookie
+    # silently re-authenticates the same rejected account on every subsequent
+    # /login, trapping the user on the error screen.
+    assert workos.logout_urls
+    assert workos.logout_urls[-1]["session_id"] == f"session_{wuser.id}"
 
 
 async def test_operator_email_always_allowed(client, workos, operator_headers):
@@ -149,8 +154,31 @@ async def test_allowlist_add_list_remove_roundtrip(client, workos, operator_head
     # Remove → the next sign-in is blocked again.
     r = await client.delete(f"/api/admin/console/allowlist/{entry_id}", headers=operator_headers)
     assert r.status_code == 200
-    frag = _fragment(await _login(client, workos, _wuser(email)))
-    assert frag == {"error": "not_allowlisted"}
+    assert _rejection_error(await _login(client, workos, _wuser(email))) == "not_allowlisted"
+
+
+async def test_allowlist_removal_kills_live_sessions(client, workos, operator_headers):
+    """Removal must log the user out everywhere, not just block future logins:
+    the staff role guard re-checks the allowlist on every request, so the
+    still-valid JWT starts 401ing (which also makes the SPA clear its stored
+    session and prompt re-login)."""
+    email = f"revoked-{uuid.uuid4().hex[:8]}@mail.dev"
+    r = await client.post(
+        "/api/admin/console/allowlist", json={"email": email}, headers=operator_headers
+    )
+    entry_id = r.json()["entry"]["id"]
+
+    token = await _token_from(await _login(client, workos, _wuser(email)))
+    assert (await client.get("/api/admin/console/me", headers=auth(token))).status_code == 200
+
+    r = await client.delete(f"/api/admin/console/allowlist/{entry_id}", headers=operator_headers)
+    assert r.status_code == 200
+
+    r = await client.get("/api/admin/console/me", headers=auth(token))
+    assert r.status_code == 401
+    # The session itself (not just console routes) is what's revoked in
+    # spirit, but /api/auth/me stays reachable so logout can still complete.
+    assert (await client.post("/api/auth/logout", headers=auth(token))).status_code == 200
 
 
 async def test_allowlist_rejects_invalid_email(client, operator_headers):

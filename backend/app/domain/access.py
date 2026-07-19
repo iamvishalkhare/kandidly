@@ -12,6 +12,8 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import AppError
+from app.core.security import AuthUser
 from app.db.models import ConsoleAllowlistEntry
 
 # The single account allowed to manage the allowlist and use the other
@@ -31,3 +33,16 @@ async def console_login_allowed(db: AsyncSession, email: str) -> bool:
         )
     ).scalar_one_or_none()
     return entry is not None
+
+
+async def ensure_console_access(db: AsyncSession, user: AuthUser) -> None:
+    """Request-time twin of the login gate, run by the staff role guard
+    (core/deps.py): a staff session whose email was removed from — or never
+    made — the allowlist dies with a 401 on its next API call, so removal
+    means "logged out everywhere" without any token bookkeeping. Candidates
+    are never gated. Dev tokens skip the check: they only work in the dev
+    env, where the seeded staff accounts aren't allowlisted."""
+    if user.role not in ("admin", "recruiter") or user.is_dev_token:
+        return
+    if not await console_login_allowed(db, user.email):
+        raise AppError("unauthorized", "Console access has been revoked for this account")

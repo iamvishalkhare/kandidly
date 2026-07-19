@@ -10,10 +10,12 @@ Token handoff: redirect to `{base_url_web}/auth/callback?next=<path>#token=<jwt>
 The JWT rides in the URL *fragment* deliberately — fragments never leave the
 browser (no server logs, no Referer leakage), and the SPA reads + clears it
 immediately. Simpler than a second exchange-code hop and safe enough given the
-token already only lives in localStorage. Failures redirect with
-`#error=<code>` (auth_failed | state_mismatch | not_allowlisted |
-account_suspended | account_invited | not_console_account |
-not_candidate_account) so the SPA can show a clean error screen.
+token already only lives in localStorage. Pre-auth failures redirect with
+`#error=<code>` (auth_failed | state_mismatch); rejections of an
+authenticated account (not_allowlisted | account_suspended | account_invited
+| not_console_account | not_candidate_account) instead bounce through
+WorkOS's logout URL — killing the AuthKit hosted session so the next sign-in
+prompts fresh — and land on `?error=<code>`. The SPA error screen reads both.
 
 Console sign-in is invite-only: the email must pass domain/access.py's
 allowlist check *before* JIT provisioning, so uninvited sign-ins never
@@ -95,6 +97,27 @@ def _spa_error(code: str) -> RedirectResponse:
     return RedirectResponse(f"{settings.base_url_web}/auth/callback#error={code}", status_code=302)
 
 
+def _reject(code: str, wos_sid: str | None) -> RedirectResponse:
+    """Rejection of an *authenticated* sign-in (not allowlisted, suspended,
+    wrong account kind): bounce the browser through WorkOS's logout URL so the
+    AuthKit hosted session dies too, with return_to carrying the SPA error
+    screen. Skipping that leaves AuthKit's SSO cookie alive, and every
+    subsequent /login silently re-authenticates the same rejected account —
+    trapping the user on the error screen with no way to switch accounts.
+    The error rides in a query param (not a fragment) because it has to
+    survive WorkOS's redirect back to us."""
+    if wos_sid:
+        try:
+            url = get_client().user_management.get_logout_url(
+                session_id=wos_sid,
+                return_to=f"{settings.base_url_web}/auth/callback?error={code}",
+            )
+            return RedirectResponse(url, status_code=302)
+        except Exception:  # noqa: BLE001 — the error screen must still render
+            pass
+    return _spa_error(code)
+
+
 @router.get("/callback", dependencies=[rate_limit("auth_callback", 30, by="ip")])
 async def callback(
     code: str | None = None,
@@ -115,22 +138,21 @@ async def callback(
     except Exception:  # noqa: BLE001 — expired/reused codes must not 500
         return _spa_error("auth_failed")
 
+    wos_sid = _workos_session_id(getattr(auth_resp, "access_token", None))
     intent = st.get("intent", "console")
     if intent == "console" and not await console_login_allowed(db, auth_resp.user.email):
-        return _spa_error("not_allowlisted")
+        return _reject("not_allowlisted", wos_sid)
     result = await provision_workos_user(db, auth_resp.user, intent)
     user = result.user
 
     if user.status == "suspended":
-        return _spa_error("account_suspended")
+        return _reject("account_suspended", wos_sid)
     if user.status == "invited":
-        return _spa_error("account_invited")
+        return _reject("account_invited", wos_sid)
     if intent == "console" and user.role not in ("admin", "recruiter"):
-        return _spa_error("not_console_account")
+        return _reject("not_console_account", wos_sid)
     if intent == "candidate" and user.role != "candidate":
-        return _spa_error("not_candidate_account")
-
-    wos_sid = _workos_session_id(getattr(auth_resp, "access_token", None))
+        return _reject("not_candidate_account", wos_sid)
     token = mint_app_jwt(
         user_id=user.id,
         email=user.email,

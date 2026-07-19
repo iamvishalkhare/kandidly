@@ -68,7 +68,7 @@ export default function ConsoleAccess() {
     if (remove.isPending) return;
     if (
       !window.confirm(
-        `Remove ${entry.email} from the allowlist? They won't be able to sign in to the console again. A session that's already signed in stays valid until it expires.`,
+        `Remove ${entry.email} from the allowlist? They'll be signed out of the console everywhere and won't be able to sign in again.`,
       )
     ) {
       return;

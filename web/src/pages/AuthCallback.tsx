@@ -6,8 +6,10 @@
  * address bar immediately, fetch /api/auth/me to populate the auth store, and
  * continue to `next`.
  *
- * Failure: `#error=<code>` — clean error screen (suspended/invited accounts,
- * wrong account kind, expired sign-in attempts).
+ * Failure: `#error=<code>` for pre-auth failures, or `?error=<code>` when the
+ * backend rejected an authenticated account — those bounce through WorkOS's
+ * logout URL first (ending the AuthKit hosted session so the next sign-in
+ * prompts fresh), and fragments don't survive that round trip.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -37,9 +39,10 @@ export default function AuthCallback() {
     ran.current = true;
 
     const hash = new URLSearchParams(window.location.hash.slice(1));
+    const search = new URLSearchParams(window.location.search);
     const token = hash.get('token');
-    const errCode = hash.get('error');
-    const nextRaw = new URLSearchParams(window.location.search).get('next');
+    const errCode = hash.get('error') ?? search.get('error');
+    const nextRaw = search.get('next');
     const next = nextRaw && nextRaw.startsWith('/') && !nextRaw.startsWith('//') ? nextRaw : '/';
 
     // Get the token out of the address bar before anything else runs.

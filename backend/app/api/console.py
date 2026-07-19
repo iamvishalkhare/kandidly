@@ -2057,9 +2057,9 @@ async def send_test_email(
 # Console-access allowlist (operator-only)
 # --------------------------------------------------------------------------- #
 # The product is invite-only: only these emails (plus the operator hardcode)
-# can complete a console-intent login — enforced in api/auth.py via
-# domain/access.py. Removal blocks the *next* sign-in; an already-minted app
-# JWT keeps working until it expires or the user logs out.
+# can complete a console-intent login (api/auth.py) — and every staff API
+# request re-checks the list via the role guard (core/deps.py), so removal
+# also kills live sessions on their next request, not just future logins.
 
 
 class AllowlistEntryOut(BaseModel):

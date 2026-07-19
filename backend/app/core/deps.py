@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import AppError
 from app.core.security import AuthUser, Role, is_token_revoked, verify_jwt, verify_service_token
 from app.db.session import get_session
+from app.domain.access import ensure_console_access
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:  # pragma: no cover
@@ -33,15 +34,21 @@ async def get_current_user(authorization: str | None = Header(default=None)) -> 
     return user
 
 
-def require_role(*roles: Role) -> Callable[[AuthUser], AuthUser]:
-    """Guard factory: `Depends(require_role('admin','recruiter'))`."""
+def require_role(*roles: Role) -> Callable[..., object]:
+    """Guard factory: `Depends(require_role('admin','recruiter'))`. Staff
+    sessions additionally pass the console-allowlist check on every request
+    (domain/access.py) — the product is invite-only, and removal from the
+    allowlist must kill live sessions, not just future logins."""
 
-    async def _guard(user: AuthUser = Depends(get_current_user)) -> AuthUser:
+    async def _guard(
+        user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+    ) -> AuthUser:
         if user.role not in roles:
             raise AppError("forbidden", "Insufficient role", detail={"required": list(roles)})
+        await ensure_console_access(db, user)
         return user
 
-    return _guard  # type: ignore
+    return _guard
 
 
 async def require_candidate(user: AuthUser = Depends(get_current_user)) -> AuthUser:

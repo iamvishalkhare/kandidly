@@ -29,6 +29,10 @@ class AuthUser:
     role: Role
     org_id: UUID | None = None
     workos_session_id: str | None = None
+    # True for unsigned dev debug tokens (dev env only). The request-time
+    # console-allowlist guard (domain/access.py) skips these — the seeded dev
+    # accounts aren't allowlisted and dev tokens never work outside dev.
+    is_dev_token: bool = False
 
 
 def mint_app_jwt(
@@ -67,6 +71,7 @@ def _decode_dev_token(token: str) -> dict:
 
 def verify_jwt(token: str) -> AuthUser:
     """Verify a bearer token and return the resolved user. Raises AppError(401)."""
+    is_dev_token = False
     try:
         payload = jwt.decode(
             token,
@@ -84,6 +89,7 @@ def verify_jwt(token: str) -> AuthUser:
             payload = _decode_dev_token(token)
         except Exception as exc:  # noqa: BLE001
             raise AppError("unauthorized", "Invalid or expired token") from exc
+        is_dev_token = True
 
     user_id = payload.get("user_id") or payload.get("sub")
     email = payload.get("email")
@@ -97,6 +103,7 @@ def verify_jwt(token: str) -> AuthUser:
         role=role,
         org_id=UUID(str(org_id)) if org_id else None,
         workos_session_id=payload.get("wos_sid"),
+        is_dev_token=is_dev_token,
     )
 
 

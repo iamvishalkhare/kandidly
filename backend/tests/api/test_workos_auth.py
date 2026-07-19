@@ -116,6 +116,19 @@ def _fragment(location: str) -> dict[str, str]:
     return {k: v[0] for k, v in parse_qs(urlsplit(location).fragment).items()}
 
 
+def _rejection_error(location: str) -> str | None:
+    """Error code from a rejected callback redirect. Rejections of an
+    authenticated account bounce through the AuthKit logout URL (the hosted
+    session must die, or the SSO cookie re-authenticates the same rejected
+    account forever) with the SPA error URL in return_to; pre-auth failures
+    carry `#error=` directly."""
+    url = urlsplit(location)
+    if url.path.endswith("/sessions/logout"):
+        rt = urlsplit(parse_qs(url.query)["return_to"][0])
+        return parse_qs(rt.query)["error"][0]
+    return _fragment(location).get("error")
+
+
 async def _token_from(location: str) -> str:
     frag = _fragment(location)
     assert "error" not in frag, f"unexpected error redirect: {frag}"
@@ -337,8 +350,7 @@ async def test_bad_status_redirects_with_error(client, workos, status):
     await _token_from(await _login(client, workos, wuser))  # provision active
     await _set_status(wuser.email, status)
 
-    frag = _fragment(await _login(client, workos, wuser))
-    assert frag == {"error": f"account_{status}"}
+    assert _rejection_error(await _login(client, workos, wuser)) == f"account_{status}"
 
 
 async def test_console_intent_rejects_candidate_account(client, workos, candidate):
@@ -346,13 +358,13 @@ async def test_console_intent_rejects_candidate_account(client, workos, candidat
     # role check: an allowlisted email that belongs to a candidate account
     # still can't open the console.
     await _allow(candidate.email)
-    frag = _fragment(await _login(client, workos, _wuser(candidate.email), intent="console"))
-    assert frag == {"error": "not_console_account"}
+    location = await _login(client, workos, _wuser(candidate.email), intent="console")
+    assert _rejection_error(location) == "not_console_account"
 
 
 async def test_candidate_intent_rejects_staff_account(client, workos):
-    frag = _fragment(await _login(client, workos, _wuser("admin@kandidly.dev"), intent="candidate"))
-    assert frag == {"error": "not_candidate_account"}
+    location = await _login(client, workos, _wuser("admin@kandidly.dev"), intent="candidate")
+    assert _rejection_error(location) == "not_candidate_account"
 
 
 async def test_unknown_state_rejected(client, workos):
